@@ -152,6 +152,48 @@ button.btn.danger{color:var(--warn)}
     <div class="list" id="list"></div>
   </section>
 
+  <section class="panel" id="syncPanel">
+    <h2>Sync between devices</h2>
+    <div id="syncOff">
+      <form id="syncForm" autocomplete="off" style="display:flex;flex-direction:column;gap:12px">
+        <p class="note">Keeps your locks the same on every device by saving them in a private GitHub repository. Sealed locks stay sealed there.</p>
+        <details>
+          <summary>How to set it up (one time)</summary>
+          <ol style="margin:10px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:.9rem;color:var(--muted)">
+            <li>Create a <strong>private</strong> repository, for example <code>timelock-data</code>: <a href="https://github.com/new" target="_blank" rel="noopener">github.com/new</a>.</li>
+            <li>Create an access key: <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">new fine-grained token</a>. Set the longest expiration offered. Under Repository access choose <em>Only select repositories</em> and pick that repository. Under Permissions, set <em>Contents</em> to <em>Read and write</em>. Generate it and copy it.</li>
+            <li>Fill in both boxes below and tap Connect.</li>
+            <li>On your other devices, use <em>Copy setup link</em> instead of repeating these steps.</li>
+          </ol>
+        </details>
+        <div class="row">
+          <label>Repository<input id="s-repo" placeholder="withstandingspring/timelock-data" spellcheck="false" autocapitalize="off"></label>
+          <label>Access key<input id="s-token" type="password" placeholder="github_pat_…" spellcheck="false" autocapitalize="off"></label>
+        </div>
+        <div><button class="btn" type="submit">Connect</button></div>
+      </form>
+    </div>
+    <div id="syncOn" hidden style="display:flex;flex-direction:column;gap:10px">
+      <p style="margin:0">Syncing with <strong id="syncRepo"></strong></p>
+      <p id="syncStatus" class="net" style="margin:0"></p>
+      <div class="actions">
+        <button class="btn" type="button" id="syncNow">Sync now</button>
+        <button class="btn" type="button" id="syncLink">Copy setup link</button>
+        <button class="btn danger" type="button" id="syncOff2">Stop syncing on this device</button>
+      </div>
+      <div id="syncConfirm" class="actions" hidden>
+        <span class="rule">Stop syncing here? Your locks stay on this device and in the repository.</span>
+        <button class="btn danger" type="button" id="syncDisc">Stop syncing</button>
+        <button class="btn" type="button" id="syncKeep">Keep syncing</button>
+      </div>
+      <div id="linkBox" hidden style="display:flex;flex-direction:column;gap:6px">
+        <textarea id="linkText" readonly aria-label="Setup link" style="min-height:70px"></textarea>
+        <p class="note" id="linkHint"></p>
+      </div>
+    </div>
+    <p id="syncMsg" hidden></p>
+  </section>
+
   <section class="panel">
     <h2>Backup</h2>
     <p class="note">Locks are saved in this browser. A backup lets you restore them after clearing browser data, or move them to another device. Sealed locks stay sealed in the backup. Locks that are already unlocked include their number in plain text.</p>

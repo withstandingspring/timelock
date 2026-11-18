@@ -25,6 +25,13 @@ one reveal per window (repeating modes).
   then shows it. The plain number stays in memory only.
 - The safety unlock is a second sealed copy for an earlier time.
 
+## Sync between devices
+
+Optional. Locks are saved to `timelock-locks.json` in a **private** GitHub repository you choose, using a
+fine-grained access token limited to that repository (Contents: read and write). Each device keeps a
+local copy and merges changes by revision, so deletions and added time carry over. Other devices can
+be set up with a one-time setup link, which contains the access token.
+
 ## Limits
 
 - Once you've seen a number, you know it.
@@ -32,7 +39,7 @@ one reveal per window (repeating modes).
   page open, the old seal stays decryptable by technical means until the page is opened again.
 - Unlocking needs an internet connection to fetch the published drand key.
 - If drand stopped operating before the unlock time, the number couldn't be recovered.
-- Locks live in one browser. Use the Backup section to save or move them. Sealed locks stay sealed in
+- Without sync, locks live in one browser. Use sync or the Backup section to move them. Sealed locks stay sealed in
   a backup, but a backup of a repeating lock becomes decryptable once the window it was sealed for
   has passed.
 

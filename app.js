@@ -53,7 +53,10 @@ const errs = {};   // id -> {msg, retryAt}
 let confirmDel = null, skew = 0, netOk = null;
 
 function load() { try { const r = localStorage.getItem(KEY); return r ? JSON.parse(r) : []; } catch (e) { return []; } }
-function save() { try { localStorage.setItem(KEY, JSON.stringify(locks)); } catch (e) {} }
+function saveLocal() { try { localStorage.setItem(KEY, JSON.stringify(locks)); } catch (e) {} }
+function save() { saveLocal(); schedulePush(); }
+function touch(L) { L.rev = (L.rev || 0) + 1; L.updated = Date.now(); }
+const live = () => locks.filter(l => !l.deleted).sort((a, b) => (b.created || 0) - (a.created || 0));
 const now = () => Date.now();
 const repeating = L => L.mode === 'schedule' || L.mode === 'cycle';
 
@@ -125,7 +128,7 @@ async function process(L) {
       L.capsule = await seal(next, n); // re-seal for the next window before showing anything
       if (w) mem[L.id] = { num: n, until: w.end, win: w.start };
     }
-    delete errs[L.id]; save();
+    delete errs[L.id]; touch(L); save();
   } catch (e) {
     let msg = 'Could not reach drand to unlock. Retrying shortly.';
     if (e.message === 'TOO_EARLY') msg = Math.abs(skew) > 60000 ? 'Your device clock is behind. Set it to the correct time to unlock.' : 'Not quite time yet. Retrying shortly.';
@@ -141,7 +144,7 @@ async function extend(L, ms) {
     L.capsule = { round: r, at: engine.timeOf(r), ct: await engine.encrypt(r, L.capsule.ct) };
     L.unlockAt += ms;
     if (L.safety) { const s = engine.roundFor(L.safety.at + ms); L.safety = { round: s, at: engine.timeOf(s), ct: await engine.encrypt(s, L.safety.ct) }; }
-    save();
+    touch(L); save();
   } finally { delete busy[L.id]; render(); }
 }
 
@@ -163,8 +166,10 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 /* ---------- render ---------- */
 function render() {
   const t = now();
-  if (!locks.length) { $('list').innerHTML = '<div class="empty">No locks yet. Seal a number above and it will appear here.</div>'; return; }
-  $('list').innerHTML = locks.map(L => {
+  renderSync();
+  const shown = live();
+  if (!shown.length) { $('list').innerHTML = '<div class="empty">No locks yet. Seal a number above and it will appear here.</div>'; return; }
+  $('list').innerHTML = shown.map(L => {
     const m = mem[L.id] && mem[L.id].until > t ? mem[L.id] : null;
     if (mem[L.id] && !m) delete mem[L.id];
     const num = L.opened ? L.opened.num : m ? m.num : null;
@@ -207,12 +212,16 @@ function render() {
 $('list').addEventListener('click', e => {
   const b = e.target.closest('button[data-act]'); if (!b) return;
   const L = locks.find(l => l.id === b.dataset.id), a = b.dataset.act, t = now();
-  if (a === 'peek') { const m = mem[L.id]; peeks[L.id] = t + (L.peekSec ? L.peekSec * 1000 : 30000); if (m && L.once) { L.usedWin = m.win; save(); } }
+  if (a === 'peek') { const m = mem[L.id]; peeks[L.id] = t + (L.peekSec ? L.peekSec * 1000 : 30000); if (m && L.once) { L.usedWin = m.win; touch(L); save(); } }
   if (a === 'unpeek') delete peeks[L.id];
   if (a === 'ext') { extend(L, +b.dataset.ms); return; }
   if (a === 'del') confirmDel = L.id;
   if (a === 'delno') confirmDel = null;
-  if (a === 'delgo') { locks = locks.filter(l => l !== L); delete mem[L.id]; confirmDel = null; save(); }
+  if (a === 'delgo') { // keep a deletion marker so other devices delete it too
+    const rev = (L.rev || 0) + 1, id = L.id;
+    Object.keys(L).forEach(k => delete L[k]); Object.assign(L, { id, deleted: true, rev, updated: Date.now() });
+    delete mem[id]; confirmDel = null; save();
+  }
   render();
 });
 
@@ -243,7 +252,7 @@ $('form').addEventListener('submit', async e => {
   const fail = m => { err.textContent = m; err.hidden = false; };
   const t = now(), n = id => +$(id).value;
   const num = $('f-num').value.trim(); if (!num) return fail('Enter the number you want to lock.');
-  const L = { id: Math.random().toString(36).slice(2) + t.toString(36), label: $('f-label').value.trim() || 'Untitled lock', mode, created: t };
+  const L = { id: Math.random().toString(36).slice(2) + t.toString(36), label: $('f-label').value.trim() || 'Untitled lock', mode, created: t, rev: 1, updated: t };
   if (mode === 'until') { const v = new Date($('f-until').value).getTime(); if (!v || v <= t) return fail('Pick an unlock time in the future.'); L.unlockAt = v; }
   if (mode === 'duration') { if (!(n('f-dur') > 0)) return fail('Enter how long to lock it.'); L.unlockAt = t + n('f-dur') * n('f-durunit'); }
   if (mode === 'schedule') { if (!days.length) return fail('Pick at least one day.'); if ($('f-from').value === $('f-to').value) return fail('Start and end times must differ.'); L.days = days.slice(); L.from = $('f-from').value; L.to = $('f-to').value; }
@@ -268,7 +277,7 @@ $('form').addEventListener('submit', async e => {
 /* ---------- backup ---------- */
 let exportText = '';
 $('exp').addEventListener('click', () => {
-  exportText = JSON.stringify({ app: 'number-time-lock', v: 2, exported: new Date().toISOString(), locks });
+  exportText = JSON.stringify({ app: 'number-time-lock', v: 2, exported: new Date().toISOString(), locks: locks.filter(l => !l.deleted) });
   const ta = $('expText'); ta.value = exportText; ta.hidden = false; $('copy').hidden = false; $('dl').hidden = false;
 });
 $('copy').addEventListener('click', async () => {
@@ -287,14 +296,134 @@ function restore(text) {
   try {
     const data = JSON.parse(text.trim());
     if (!data || !Array.isArray(data.locks)) throw new Error();
-    const have = new Set(locks.map(l => l.id));
-    const add = data.locks.filter(l => l && l.id && !have.has(l.id));
-    locks = locks.concat(add); save(); render();
-    msg.className = 'ok'; msg.textContent = add.length ? 'Restored ' + add.length + ' lock' + (add.length === 1 ? '' : 's') + '.' : 'Nothing new to restore. Those locks are already here.';
+    const res = merge(data.locks.filter(l => l && l.id));
+    save(); render();
+    msg.className = 'ok'; msg.textContent = res.added ? 'Restored ' + res.added + ' lock' + (res.added === 1 ? '' : 's') + '.' : 'Nothing new to restore. Those locks are already here.';
   } catch (e) { msg.className = 'err'; msg.textContent = "That doesn't look like a backup from this app. Paste the whole text, starting with {."; }
 }
 $('imp').addEventListener('click', () => restore($('impText').value));
 $('impFile').addEventListener('change', e => { const f = e.target.files[0]; if (f) f.text().then(restore); e.target.value = ''; });
+
+/* ---------- merge (used by sync and restore) ---------- */
+const newer = (a, b) => ((a.rev || 0) - (b.rev || 0)) || ((a.updated || 0) - (b.updated || 0));
+function merge(remote) {
+  let added = 0, changed = false, needPush = false;
+  const byId = new Map(locks.map(l => [l.id, l])), seen = new Set();
+  for (const r of remote) {
+    seen.add(r.id);
+    const l = byId.get(r.id);
+    if (!l) { locks.push(r); if (!r.deleted) added++; changed = true; continue; }
+    const c = newer(r, l);
+    if (c > 0) { Object.keys(l).forEach(k => delete l[k]); Object.assign(l, r); changed = true; if (r.deleted) delete mem[r.id]; }
+    else if (c < 0) needPush = true;
+  }
+  if (locks.some(l => !seen.has(l.id))) needPush = true;
+  return { added, changed, needPush };
+}
+
+/* ---------- sync through a private GitHub repository ---------- */
+const SYNC_KEY = 'timelock.sync', FILE = '/contents/timelock-locks.json';
+let sync = null, sha = null, syncing = false, again = false, pushTimer = null, syncState = { ok: null, msg: '', at: 0 };
+try { sync = JSON.parse(localStorage.getItem(SYNC_KEY) || 'null'); } catch (e) {}
+const b64enc = s => btoa(unescape(encodeURIComponent(s)));
+const b64dec = s => decodeURIComponent(escape(atob(s.replace(/\s/g, ''))));
+function gh(method, path, body, cfg = sync) {
+  return fetch('https://api.github.com/repos/' + cfg.repo + path, {
+    method, cache: 'no-store',
+    headers: Object.assign({ Authorization: 'Bearer ' + cfg.token, Accept: 'application/vnd.github+json' }, body ? { 'Content-Type': 'application/json' } : {}),
+    body: body ? JSON.stringify(body) : undefined
+  });
+}
+function ghError(status) {
+  if (status === 401) return 'GitHub rejected the access key. It may have expired. Create a new one and reconnect.';
+  if (status === 403) return "The access key doesn't have permission to change files. It needs Contents: Read and write.";
+  if (status === 404) return "Can't find that repository, or the access key isn't allowed to use it.";
+  return 'GitHub returned an error (' + status + '). Retrying later.';
+}
+async function pull() {
+  const r = await gh('GET', FILE + '?t=' + Date.now());
+  if (r.status === 404) { sha = null; return []; }
+  if (!r.ok) throw new Error(ghError(r.status));
+  const j = await r.json(); sha = j.sha;
+  const data = JSON.parse(b64dec(j.content));
+  return Array.isArray(data.locks) ? data.locks : [];
+}
+async function push() {
+  const body = { message: 'Update locks', content: b64enc(JSON.stringify({ app: 'number-time-lock', v: 2, updated: new Date().toISOString(), locks }, null, 1)) };
+  if (sha) body.sha = sha;
+  const r = await gh('PUT', FILE, body);
+  if (r.status === 409 || r.status === 422) return false; // someone else wrote first
+  if (!r.ok) throw new Error(ghError(r.status));
+  sha = (await r.json()).content.sha; return true;
+}
+async function syncNow() {
+  if (!sync) return;
+  if (syncing) { again = true; return; }
+  syncing = true; renderSync();
+  try {
+    for (let i = 0; i < 4; i++) {
+      const res = merge(await pull());
+      if (res.changed) { saveLocal(); render(); }
+      if (!res.needPush || await push()) break;
+    }
+    syncState = { ok: true, msg: '', at: Date.now() };
+  } catch (e) {
+    syncState = { ok: false, msg: e instanceof TypeError ? "Can't reach GitHub. Changes will sync when you're back online." : e.message, at: syncState.at };
+  } finally {
+    syncing = false; renderSync();
+    if (again) { again = false; syncNow(); }
+  }
+}
+function schedulePush() { if (!sync) return; clearTimeout(pushTimer); pushTimer = setTimeout(syncNow, 1500); }
+function renderSync() {
+  $('syncOff').hidden = !!sync; $('syncOn').hidden = !sync;
+  if (!sync) return;
+  $('syncRepo').textContent = sync.repo;
+  const s = $('syncStatus');
+  if (syncing) { s.className = 'net'; s.textContent = 'Syncing…'; }
+  else if (syncState.ok === false) { s.className = 'err'; s.textContent = syncState.msg; }
+  else if (syncState.at) { s.className = 'ok'; s.textContent = 'Synced ' + new Date(syncState.at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); }
+  else { s.className = 'net'; s.textContent = 'Not synced yet'; }
+}
+async function connect(repo, token) {
+  const msg = $('syncMsg'); msg.hidden = false; msg.className = 'net'; msg.textContent = 'Checking…';
+  repo = repo.trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$|\/$/g, '');
+  token = token.trim();
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) { msg.className = 'err'; msg.textContent = 'Enter the repository as owner/name, for example withstandingspring/timelock-data.'; return false; }
+  if (!token) { msg.className = 'err'; msg.textContent = 'Paste your access key.'; return false; }
+  try {
+    const r = await gh('GET', '', null, { repo, token });
+    if (!r.ok) { msg.className = 'err'; msg.textContent = ghError(r.status); return false; }
+    const info = await r.json();
+    if (!info.private) { msg.className = 'err'; msg.textContent = 'That repository is public. Unlocked numbers would be visible to anyone, so use a private repository.'; return false; }
+  } catch (e) { msg.className = 'err'; msg.textContent = "Can't reach GitHub. Check your connection."; return false; }
+  sync = { repo, token }; sha = null;
+  try { localStorage.setItem(SYNC_KEY, JSON.stringify(sync)); } catch (e) {}
+  msg.hidden = true; $('s-token').value = '';
+  await syncNow(); render(); return true;
+}
+$('syncForm').addEventListener('submit', e => { e.preventDefault(); connect($('s-repo').value, $('s-token').value); });
+$('syncNow').addEventListener('click', syncNow);
+$('syncOff2').addEventListener('click', () => { $('syncConfirm').hidden = false; });
+$('syncKeep').addEventListener('click', () => { $('syncConfirm').hidden = true; });
+$('syncDisc').addEventListener('click', () => {
+  sync = null; sha = null; syncState = { ok: null, msg: '', at: 0 };
+  try { localStorage.removeItem(SYNC_KEY); } catch (e) {}
+  $('syncConfirm').hidden = true; $('linkBox').hidden = true; renderSync();
+});
+$('syncLink').addEventListener('click', async () => {
+  const link = location.origin + location.pathname + '#sync=' + b64enc(JSON.stringify(sync));
+  const box = $('linkBox'); box.hidden = false; $('linkText').value = link;
+  try { await navigator.clipboard.writeText(link); $('linkHint').textContent = 'Copied. Open it on your other device. It contains your access key, so only send it to yourself.'; }
+  catch (e) { $('linkText').select(); $('linkHint').textContent = 'Copy this link and open it on your other device. It contains your access key, so only send it to yourself.'; }
+});
+function setupFromLink() {
+  const m = location.hash.match(/^#sync=(.+)$/); if (!m) return;
+  history.replaceState(null, '', location.pathname + location.search);
+  try { const cfg = JSON.parse(b64dec(decodeURIComponent(m[1]))); if (cfg.repo && cfg.token) connect(cfg.repo, cfg.token); } catch (e) {}
+}
+setupFromLink();
+window.addEventListener('hashchange', setupFromLink);
 
 /* ---------- network clock check ---------- */
 async function checkNet() {
@@ -313,5 +442,7 @@ render();
 checkNet();
 setInterval(() => { locks.forEach(L => { process(L); }); render(); }, 1000);
 setInterval(checkNet, 5 * 60000);
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { locks.forEach(L => { process(L); }); render(); } });
+syncNow();
+setInterval(() => { if (!document.hidden) syncNow(); }, 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { syncNow(); locks.forEach(L => { process(L); }); render(); } });
 })();
