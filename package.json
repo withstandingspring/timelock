@@ -1,0 +1,12 @@
+{
+  "name": "number-time-lock",
+  "private": true,
+  "description": "Hide a number until a set time using drand time-lock encryption.",
+  "scripts": {
+    "build:vendor": "esbuild tools/vendor-entry.js --bundle --format=iife --global-name=TL --platform=browser --minify --outfile=vendor/tlock.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.24.0",
+    "tlock-js": "0.9.0"
+  }
+}

@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Number Time Lock</title>
+<meta name="description" content="Hide a number until a set time using drand time-lock encryption.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+/* Layout: one narrow column. Form panel, then lock cards, then backup tools. Steel neutrals, brass accent. */
+:root{
+  --bg:#eef0f2; --panel:#ffffff; --ink:#1b2027; --muted:#5d6672; --line:#d5dae0;
+  --brass:#9a6b12; --brass-soft:#f4ead6; --ok:#1d7a4a; --ok-soft:#e1f2e8; --warn:#a33a2a; --warn-soft:#f8e3df;
+  --face:"Archivo",system-ui,-apple-system,"Segoe UI",sans-serif; --mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#14171b; --panel:#1d2127; --ink:#e7eaee; --muted:#9aa3ae; --line:#2f353d;
+  --brass:#e0b45c; --brass-soft:#3a2f1a; --ok:#5cc98c; --ok-soft:#173326; --warn:#f08a78; --warn-soft:#3d1f1a; color-scheme:dark}}
+*{box-sizing:border-box}
+html{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--face);font-size:15px;line-height:1.5;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:28px 60px}
+[hidden]{display:none!important}
+.wrap{max-width:640px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
+h1{font-size:1.7rem;margin:0;letter-spacing:-.01em;text-wrap:balance}
+h2{font-size:1rem;margin:0;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
+.sub{color:var(--muted);margin:4px 0 0}
+.net{font-size:.82rem;color:var(--muted);font-family:var(--mono)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px;display:flex;flex-direction:column;gap:14px}
+label{font-weight:600;font-size:.88rem;display:flex;flex-direction:column;gap:5px}
+input,select,textarea{font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:8px 10px;min-width:0;width:100%}
+textarea{font-family:var(--mono);font-size:.78rem;min-height:110px;resize:vertical}
+input:disabled,select:disabled{opacity:.5}
+input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible,summary:focus-visible{outline:2px solid var(--brass);outline-offset:2px}
+.row{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+.modes{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px}
+.mode{border:1px solid var(--line);border-radius:8px;padding:10px;cursor:pointer;font:inherit;font-weight:500;font-size:.9rem;background:var(--bg);text-align:left;color:var(--ink)}
+.mode small{display:block;color:var(--muted);font-weight:400;font-size:.78rem}
+.mode[aria-pressed="true"]{border-color:var(--brass);background:var(--brass-soft)}
+.days{display:flex;flex-wrap:wrap;gap:6px}
+.day{border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:999px;padding:5px 11px;cursor:pointer;font:inherit;font-size:.85rem}
+.day[aria-pressed="true"]{background:var(--brass);border-color:var(--brass);color:var(--panel)}
+.sect{display:flex;flex-direction:column;gap:10px;border-top:1px solid var(--line);padding-top:12px}
+details{border-top:1px solid var(--line);padding-top:12px}
+summary{cursor:pointer;font-weight:600}
+.opts{display:flex;flex-direction:column;gap:12px;margin-top:12px}
+.check{flex-direction:row;align-items:flex-start;gap:9px;font-weight:500}
+.check input{width:auto;margin-top:4px}
+.check span small{display:block;color:var(--muted);font-weight:400}
+button.primary,button.btn{font:inherit;font-weight:600;border-radius:6px;padding:9px 14px;cursor:pointer;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+button.primary{background:var(--brass);border-color:var(--brass);color:var(--panel)}
+button:disabled{opacity:.6;cursor:wait}
+button.btn.danger{color:var(--warn)}
+.err{color:var(--warn);font-size:.88rem;margin:0}
+.ok{color:var(--ok);font-size:.88rem;margin:0}
+.list{display:flex;flex-direction:column;gap:12px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:10px}
+.card.open{border-color:var(--ok)}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
+.top h3{margin:0;font-size:1.05rem;min-width:0;overflow-wrap:anywhere}
+.pill{font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding:3px 9px;border-radius:999px;white-space:nowrap}
+.pill.locked{background:var(--warn-soft);color:var(--warn)}
+.pill.open{background:var(--ok-soft);color:var(--ok)}
+.pill.busy{background:var(--brass-soft);color:var(--brass)}
+.digits{font-family:var(--mono);font-size:1.9rem;font-weight:600;letter-spacing:.12em;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.digits.hidden{color:var(--muted);letter-spacing:.3em}
+.count{font-family:var(--mono);font-variant-numeric:tabular-nums;color:var(--muted);font-size:.9rem}
+.rule{font-size:.85rem;color:var(--muted)}
+.actions{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.actions .btn{padding:6px 11px;font-size:.85rem}
+.note{font-size:.82rem;color:var(--muted);border-left:3px solid var(--line);padding-left:10px;margin:0}
+.alert{background:var(--warn-soft);color:var(--warn);border-radius:8px;padding:10px 12px;font-size:.88rem}
+.empty{color:var(--muted);text-align:center;padding:24px}
+.how p{margin:8px 0 0;color:var(--muted);font-size:.9rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Number Time Lock</h1>
+    <p class="sub">Put a number in, choose when it may be seen. It's sealed with time-lock encryption, so it can't be opened early, by you or anyone.</p>
+    <p class="net" id="net">Checking connection to drand…</p>
+  </header>
+
+  <div id="clockAlert" class="alert" hidden></div>
+
+  <form class="panel" id="form" autocomplete="off">
+    <h2>New lock</h2>
+    <div class="row">
+      <label>Name<input id="f-label" placeholder="e.g. Safe combination" maxlength="60"></label>
+      <label>Number or code<input id="f-num" type="text" inputmode="numeric" placeholder="e.g. 4821" spellcheck="false"></label>
+    </div>
+
+    <div>
+      <div style="font-weight:600;font-size:.88rem;margin-bottom:6px">When can it be seen?</div>
+      <div class="modes" id="modes">
+        <button type="button" class="mode" data-mode="until" aria-pressed="true">Until a date<small>Unlocks at a set date and time</small></button>
+        <button type="button" class="mode" data-mode="duration" aria-pressed="false">For a duration<small>Locked for a set time from now</small></button>
+        <button type="button" class="mode" data-mode="schedule" aria-pressed="false">On a schedule<small>Only on chosen days and hours</small></button>
+        <button type="button" class="mode" data-mode="cycle" aria-pressed="false">Repeating cycle<small>Locked X, open Y, repeat</small></button>
+      </div>
+    </div>
+
+    <div id="m-until" class="row">
+      <label>Unlock at<input id="f-until" type="datetime-local"></label>
+    </div>
+    <div id="m-duration" class="row" hidden>
+      <label>Lock for<input id="f-dur" type="number" min="1" value="24"></label>
+      <label>Unit<select id="f-durunit"><option value="60000">minutes</option><option value="3600000" selected>hours</option><option value="86400000">days</option><option value="604800000">weeks</option></select></label>
+    </div>
+    <div id="m-schedule" hidden style="flex-direction:column;gap:12px">
+      <div class="days" id="days"></div>
+      <div class="row">
+        <label>Visible from<input id="f-from" type="time" value="18:00"></label>
+        <label>Visible until<input id="f-to" type="time" value="20:00"></label>
+      </div>
+      <p class="note">If "until" is earlier than "from", the window runs past midnight (e.g. 22:00 to 02:00).</p>
+    </div>
+    <div id="m-cycle" class="row" hidden>
+      <label>Locked for<input id="f-cl" type="number" min="1" value="6"></label>
+      <label>Unit<select id="f-clunit"><option value="60000">minutes</option><option value="3600000" selected>hours</option><option value="86400000">days</option></select></label>
+      <label>Then visible for<input id="f-co" type="number" min="1" value="15"></label>
+      <label>Unit<select id="f-counit"><option value="60000" selected>minutes</option><option value="3600000">hours</option><option value="86400000">days</option></select></label>
+    </div>
+    <p class="note" id="repeatNote" hidden>Repeating locks re-seal themselves while this page is open during a window. Open the page at least once in every window. If a window passes without it, the number stays openable by technical means until you next open the page.</p>
+
+    <div class="sect">
+      <label class="check"><input type="checkbox" id="o-safe" checked><span>Safety unlock<small>A second sealed copy that opens for good after this time, so the number can't stay locked forever. Untick to turn it off.</small></span></label>
+      <div class="row">
+        <label>Open after<input id="o-safen" type="number" min="1" value="7"></label>
+        <label>Unit<select id="o-safeunit"><option value="3600000">hours</option><option value="86400000" selected>days</option><option value="604800000">weeks</option></select></label>
+      </div>
+    </div>
+
+    <details>
+      <summary>More options</summary>
+      <div class="opts">
+        <label class="check"><input type="checkbox" id="o-peek"><span>Show briefly when revealed<small>The number stays covered even when unlocked. Tapping Reveal shows it for a few seconds.</small></span></label>
+        <label>Seconds shown per reveal<input id="o-peeksec" type="number" min="1" value="10"></label>
+        <label class="check"><input type="checkbox" id="o-once"><span>One reveal per window<small>Repeating locks only. After one reveal it stays covered until the next window.</small></span></label>
+      </div>
+    </details>
+
+    <p class="err" id="err" hidden></p>
+    <div><button class="primary" type="submit" id="submit">Seal it</button></div>
+  </form>
+
+  <section style="display:flex;flex-direction:column;gap:12px">
+    <h2>Your locks</h2>
+    <div class="list" id="list"></div>
+  </section>
+
+  <section class="panel">
+    <h2>Backup</h2>
+    <p class="note">Locks are saved in this browser. A backup lets you restore them after clearing browser data, or move them to another device. Sealed locks stay sealed in the backup. Locks that are already unlocked include their number in plain text.</p>
+    <div class="actions">
+      <button class="btn" type="button" id="exp">Create backup</button>
+      <button class="btn" type="button" id="copy" hidden>Copy</button>
+      <button class="btn" type="button" id="dl" hidden>Download file</button>
+    </div>
+    <textarea id="expText" readonly hidden aria-label="Backup text"></textarea>
+    <label>Restore from backup<textarea id="impText" placeholder="Paste a backup here"></textarea></label>
+    <div class="actions">
+      <button class="btn" type="button" id="imp">Restore</button>
+      <label class="btn" style="flex-direction:row;font-weight:600;font-size:.85rem;padding:6px 11px;border:1px solid var(--line);border-radius:6px;cursor:pointer">Open backup file<input type="file" id="impFile" accept=".json,.txt,application/json,text/plain" hidden></label>
+    </div>
+    <p id="impMsg" hidden></p>
+  </section>
+
+  <details class="how panel">
+    <summary>How it works</summary>
+    <p>Your number is encrypted in this browser to a future round of <a href="https://drand.love" target="_blank" rel="noopener">drand</a>, a public randomness network run by independent organizations. The key for each round is published only when that round arrives, every 3 seconds. Until then nobody can decrypt it: not you, not this site, not Claude. Changing your device clock doesn't help, because the key simply doesn't exist yet.</p>
+    <p>The number itself is never saved before it unlocks. Only the sealed version is. Unlocking needs an internet connection to fetch the published key.</p>
+    <p>Limits: once a number is shown, you know it. Repeating locks rely on this page re-sealing the number during each window. If drand stopped running before your unlock time, the number could not be recovered, so keep a separate backup of anything you can't afford to lose.</p>
+  </details>
+</div>
+<script src="vendor/tlock.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
