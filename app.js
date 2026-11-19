@@ -165,11 +165,17 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 
 /* ---------- render ---------- */
 function render() {
-  const t = now();
   renderSync();
-  const shown = live();
-  if (!shown.length) { $('list').innerHTML = '<div class="empty">No locks yet. Seal a number above and it will appear here.</div>'; return; }
-  $('list').innerHTML = shown.map(L => {
+  const all = live(), pinned = all.filter(l => l.pinned), rest = all.filter(l => !l.pinned);
+  $('pinnedSec').hidden = !pinned.length;
+  $('pinned').innerHTML = pinned.map(cardHTML).join('');
+  $('restTitle').hidden = !rest.length && !!pinned.length;
+  $('list').innerHTML = rest.length ? rest.map(cardHTML).join('')
+    : pinned.length ? '' : '<div class="empty">No locks yet. Seal a number above and it will appear here.</div>';
+}
+function cardHTML(L) {
+  const t = now();
+  {
     const m = mem[L.id] && mem[L.id].until > t ? mem[L.id] : null;
     if (mem[L.id] && !m) delete mem[L.id];
     const num = L.opened ? L.opened.num : m ? m.num : null;
@@ -199,17 +205,17 @@ function render() {
     if (L.once && repeating(L)) extra.push('one reveal per window');
     if (L.peekSec) extra.push('brief reveal ' + L.peekSec + 's');
     return `<article class="card${visible ? ' open' : ''}${L.pinned ? ' pinned' : ''}">
-      <div class="top"><h3>${L.pinned ? '<span class="pin">Pinned</span>' : ''}${esc(L.label)}</h3><span class="pill ${pill[0]}">${pill[1]}</span></div>
+      <div class="top"><h3>${esc(L.label)}</h3><span class="pill ${pill[0]}">${pill[1]}</span></div>
       <div class="digits${visible ? '' : ' hidden'}">${visible ? esc(num) : '••••••'}</div>
       <div class="count">${esc(count)}</div>
       <div class="rule">${esc(ruleTxt(L))}${extra.length ? ' · ' + esc(extra.join(' · ')) : ''}</div>
       <div class="actions">${acts}</div>
     </article>`;
-  }).join('');
+  }
 }
 
 /* ---------- list actions ---------- */
-$('list').addEventListener('click', e => {
+function onCardClick(e) {
   const b = e.target.closest('button[data-act]'); if (!b) return;
   const L = locks.find(l => l.id === b.dataset.id), a = b.dataset.act, t = now();
   if (a === 'peek') { const m = mem[L.id]; peeks[L.id] = t + (L.peekSec ? L.peekSec * 1000 : 30000); if (m && L.once) { L.usedWin = m.win; touch(L); save(); } }
@@ -224,7 +230,9 @@ $('list').addEventListener('click', e => {
     delete mem[id]; confirmDel = null; save();
   }
   render();
-});
+}
+$('list').addEventListener('click', onCardClick);
+$('pinned').addEventListener('click', onCardClick);
 
 /* ---------- form ---------- */
 $('modes').addEventListener('click', e => {
