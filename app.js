@@ -199,7 +199,7 @@ function cardHTML(L) {
     if (visible && needsPeek) acts += `<button class="btn" data-act="unpeek" data-id="${L.id}">Cover now</button>`;
     if (!open && !repeating(L) && L.capsule && !busy[L.id]) acts += `<button class="btn" data-act="ext" data-ms="3600000" data-id="${L.id}">+1 hour</button><button class="btn" data-act="ext" data-ms="86400000" data-id="${L.id}">+1 day</button><button class="btn" data-act="ext" data-ms="604800000" data-id="${L.id}">+1 week</button>`;
     if (confirmDel === L.id) acts += `<span class="rule">Delete this lock? ${open ? '' : 'The number will be gone for good.'}</span><button class="btn danger" data-act="delgo" data-id="${L.id}">Delete</button><button class="btn" data-act="delno">Keep</button>`;
-    else acts += `<button class="btn" data-act="pin" data-id="${L.id}">${L.pinned ? 'Unpin' : 'Pin to top'}</button><button class="btn danger" data-act="del" data-id="${L.id}">Delete</button>`;
+    else acts += (ntfyTopic && !L.opened ? `<button class="btn" data-act="notify" data-id="${L.id}">${L.notify ? 'Notify: on' : 'Notify: off'}</button>` : '') + `<button class="btn" data-act="pin" data-id="${L.id}">${L.pinned ? 'Unpin' : 'Pin to top'}</button><button class="btn danger" data-act="del" data-id="${L.id}">Delete</button>`;
     const extra = [];
     if (L.safety) extra.push('safety unlock ' + when(L.safety.at));
     if (L.once && repeating(L)) extra.push('one reveal per window');
@@ -221,6 +221,7 @@ function onCardClick(e) {
   if (a === 'peek') { const m = mem[L.id]; peeks[L.id] = t + (L.peekSec ? L.peekSec * 1000 : 30000); if (m && L.once) { L.usedWin = m.win; touch(L); save(); } }
   if (a === 'unpeek') delete peeks[L.id];
   if (a === 'pin') { L.pinned = !L.pinned; touch(L); save(); }
+  if (a === 'notify') { L.notify = !L.notify; if (!L.notify) cancelBookings(L); touch(L); save(); if (L.notify) bookAll(); }
   if (a === 'ext') { extend(L, +b.dataset.ms); return; }
   if (a === 'del') confirmDel = L.id;
   if (a === 'delno') confirmDel = null;
@@ -541,13 +542,13 @@ $('n-save').addEventListener('click', () => {
   const v = $('n-topic').value.trim();
   if (!validTopic(v)) return nMsg('Use only letters, numbers, - and _, up to 64 characters.', 'err');
   if (v.length < 10) return nMsg('Use at least 10 characters so nobody can guess it.', 'err');
-  setTopic(v); nMsg('Saved. Tap Send test to check your phone gets it.', 'ok'); bookAll();
+  setTopic(v); nMsg('Saved. Tap Send test to check your phone gets it.', 'ok'); render(); bookAll();
 });
 $('n-test').addEventListener('click', async () => {
   try { await ntfySend(null, 0, 'Time Lock', 'Test notification. Unlock notifications are working.'); nMsg('Sent. It should arrive on your phone within a few seconds.', 'ok'); }
   catch (e) { nMsg(e instanceof TypeError ? "Couldn't reach ntfy. Check your connection." : e.message, 'err'); }
 });
-$('n-clear').addEventListener('click', () => { setTopic(null); $('n-topic').value = ''; nMsg('Notifications are off on this device.', 'net'); });
+$('n-clear').addEventListener('click', () => { setTopic(null); $('n-topic').value = ''; nMsg('Notifications are off on this device.', 'net'); render(); });
 $('f-notify').addEventListener('change', () => { $('f-notify').dataset.touched = '1'; });
 renderNotify();
 

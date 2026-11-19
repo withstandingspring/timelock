@@ -32,6 +32,16 @@ fine-grained access token limited to that repository (Contents: read and write).
 local copy and merges changes by revision, so deletions and added time carry over. Other devices can
 be set up with a one-time setup link, which contains the access token.
 
+## Unlock notifications
+
+Optional, through [ntfy](https://ntfy.sh). Enter a private ntfy channel name in the app and subscribe to it in the
+ntfy phone app. Locks book a notification for their unlock time (repeating locks book about a day of
+windows ahead) whenever the app is open. Each booking uses a fixed sequence ID, so adding time replaces it,
+deleting a lock cancels it, and two devices can't double-book. Messages contain the lock name, never the number.
+
+ntfy only accepts bookings up to 3 days ahead. A scheduled GitHub Actions job in the private data
+repository books upcoming notifications every 12 hours, so long locks are covered even if the app isn't opened.
+
 ## Limits
 
 - Once you've seen a number, you know it.
