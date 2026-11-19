@@ -238,7 +238,7 @@ function render() {
 function cardHTML(L) {
   const t = now();
   {
-    const m = mem[L.id] && mem[L.id].until > t ? mem[L.id] : null;
+    const m = mem[L.id] && mem[L.id].until > t && mem[L.id].win !== L.closedWin ? mem[L.id] : null; // closedWin: relocked early (synced)
     if (mem[L.id] && !m) delete mem[L.id];
     const num = L.opened ? (plain[L.id] != null ? plain[L.id] : L.opened.num != null ? L.opened.num : null) : m ? m.num : null;
     const open = num !== null;
@@ -258,6 +258,7 @@ function cardHTML(L) {
     else count = 'No upcoming window';
     let acts = '';
     if (open && needsPeek && !visible && !usedUp) acts += `<button class="btn" data-act="peek" data-id="${L.id}">Reveal</button>`;
+    if (m) acts += `<button class="btn" data-act="relock" data-id="${L.id}">Relock now</button>`;
     if (visible && needsPeek) acts += `<button class="btn" data-act="unpeek" data-id="${L.id}">Cover now</button>`;
     if (!open && !repeating(L) && L.capsule && !busy[L.id]) acts += `<button class="btn" data-act="ext" data-ms="3600000" data-id="${L.id}">+1 hour</button><button class="btn" data-act="ext" data-ms="86400000" data-id="${L.id}">+1 day</button><button class="btn" data-act="ext" data-ms="604800000" data-id="${L.id}">+1 week</button>`;
     if (confirmDel === L.id) acts += `<span class="rule">Delete this lock? ${open ? '' : 'The number will be gone for good.'}</span><button class="btn danger" data-act="delgo" data-id="${L.id}">Delete</button><button class="btn" data-act="delno">Keep</button>`;
@@ -283,6 +284,9 @@ function onCardClick(e) {
   const L = locks.find(l => l.id === b.dataset.id), a = b.dataset.act, t = now();
   if (a === 'peek') { const m = mem[L.id]; peeks[L.id] = t + (L.peekSec ? L.peekSec * 1000 : 30000); if (m && L.once) { L.usedWin = m.win; touch(L); save(); } }
   if (a === 'unpeek') delete peeks[L.id];
+  if (a === 'relock' && mem[L.id]) { // end this window early; the next window is already sealed
+    L.closedWin = mem[L.id].win; delete mem[L.id]; delete peeks[L.id]; touch(L); save(); toast('Relocked. Next visible ' + when(L.capsule.at) + '.');
+  }
   if (a === 'pin') { L.pinned = !L.pinned; touch(L); save(); }
   if (a === 'excl') { openExEdit(L); return; }
   if (a === 'edit') { if (!busy[L.id]) startEdit(L); return; }
