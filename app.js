@@ -176,16 +176,19 @@ async function process(L) {
       const n = await openCapsule(L.safety.ct);
       plain[L.id] = n; savePlain();
       L.opened = { how: 'safety', at: now(), ct: L.safety.ct }; L.capsule = null; L.safety = null; delete mem[L.id];
-    } else if (!repeating(L)) {
-      const n = await openCapsule(L.capsule.ct);
-      plain[L.id] = n; savePlain();
-      L.opened = { how: 'time', at: now(), ct: L.capsule.ct }; L.capsule = null; L.safety = null;
     } else {
       const n = await openCapsule(L.capsule.ct);
+      if (L.pending) { applyTiming(L, L.pending); delete L.pending; } // a change saved while sealed takes effect now
+      if (!repeating(L) && L.unlockAt > now() + 3000) L.capsule = await seal(L.unlockAt, n); // pending change moved it later
+      else if (!repeating(L)) {
+        plain[L.id] = n; savePlain();
+        L.opened = { how: 'time', at: now(), ct: L.capsule.ct }; L.capsule = null; L.safety = null;
+      } else {
       const t2 = now(), w = currentWindow(L, t2);
       const next = nextWindowStart(L, w ? w.end - 1 : t2);
       L.capsule = await seal(next, n); // re-seal for the next window before showing anything
       if (w) mem[L.id] = { num: n, until: w.end, win: w.start };
+      }
     }
     delete errs[L.id]; touch(L); save();
   } catch (e) {
@@ -258,11 +261,12 @@ function cardHTML(L) {
     if (visible && needsPeek) acts += `<button class="btn" data-act="unpeek" data-id="${L.id}">Cover now</button>`;
     if (!open && !repeating(L) && L.capsule && !busy[L.id]) acts += `<button class="btn" data-act="ext" data-ms="3600000" data-id="${L.id}">+1 hour</button><button class="btn" data-act="ext" data-ms="86400000" data-id="${L.id}">+1 day</button><button class="btn" data-act="ext" data-ms="604800000" data-id="${L.id}">+1 week</button>`;
     if (confirmDel === L.id) acts += `<span class="rule">Delete this lock? ${open ? '' : 'The number will be gone for good.'}</span><button class="btn danger" data-act="delgo" data-id="${L.id}">Delete</button><button class="btn" data-act="delno">Keep</button>`;
-    else acts += (ntfyTopic && !L.opened ? `<button class="btn" data-act="notify" data-id="${L.id}">Notify: ${!L.notify ? 'off' : L.notify === 'quiet' ? 'not during quiet hours' : 'always'}</button>` : '') + (L.mode === 'cycle' && !L.opened ? `<button class="btn" data-act="excl" data-id="${L.id}">Exclusions</button>` : '') + `<button class="btn" data-act="pin" data-id="${L.id}">${L.pinned ? 'Unpin' : 'Pin to top'}</button><button class="btn danger" data-act="del" data-id="${L.id}">Delete</button>`;
+    else acts += (ntfyTopic && !L.opened ? `<button class="btn" data-act="notify" data-id="${L.id}">Notify: ${!L.notify ? 'off' : L.notify === 'quiet' ? 'not during quiet hours' : 'always'}</button>` : '') + `<button class="btn" data-act="edit" data-id="${L.id}">Edit</button>` + (L.mode === 'cycle' && !L.opened ? `<button class="btn" data-act="excl" data-id="${L.id}">Exclusions</button>` : '') + `<button class="btn" data-act="pin" data-id="${L.id}">${L.pinned ? 'Unpin' : 'Pin to top'}</button><button class="btn danger" data-act="del" data-id="${L.id}">Delete</button>`;
     const extra = [];
     if (L.safety) extra.push('safety unlock ' + when(L.safety.at));
     if (L.once && repeating(L)) extra.push('one reveal per window');
     if (L.peekSec) extra.push('brief reveal ' + L.peekSec + 's');
+    if (L.pending) extra.push('change waiting for the next unlock: ' + ruleTxt(Object.assign({}, L, L.pending)));
     return `<article class="card${visible ? ' open' : ''}${L.pinned ? ' pinned' : ''}">
       <div class="top"><h3>${esc(L.label)}</h3><span class="pill ${pill[0]}">${pill[1]}</span></div>
       <div class="digits${visible ? '' : ' hidden'}">${visible ? esc(num) : '••••••'}</div>
@@ -281,6 +285,7 @@ function onCardClick(e) {
   if (a === 'unpeek') delete peeks[L.id];
   if (a === 'pin') { L.pinned = !L.pinned; touch(L); save(); }
   if (a === 'excl') { openExEdit(L); return; }
+  if (a === 'edit') { if (!busy[L.id]) startEdit(L); return; }
   if (a === 'notify') { // cycles always -> not during quiet hours -> off
     setNotify(L, !L.notify ? 'always' : L.notify === 'quiet' ? 'off' : 'quiet');
     if (!L.notify) cancelBookings(L); touch(L); save(); if (L.notify) bookAll();
@@ -300,13 +305,16 @@ $('list').addEventListener('click', onCardClick);
 $('pinned').addEventListener('click', onCardClick);
 
 /* ---------- form ---------- */
-$('modes').addEventListener('click', e => {
-  const b = e.target.closest('.mode'); if (!b) return; mode = b.dataset.mode;
-  document.querySelectorAll('.mode').forEach(m => m.setAttribute('aria-pressed', String(m === b)));
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll('.mode').forEach(x => x.setAttribute('aria-pressed', String(x.dataset.mode === m)));
   ['until', 'duration', 'schedule', 'cycle'].forEach(m => { $('m-' + m).hidden = m !== mode; });
   $('m-schedule').style.display = mode === 'schedule' ? 'flex' : '';
   $('repeatNote').hidden = !(mode === 'schedule' || mode === 'cycle');
-});
+  cyclePreview();
+}
+$('modes').addEventListener('click', e => { const b = e.target.closest('.mode'); if (b) setMode(b.dataset.mode); });
+function setDays(arr) { days = arr.slice(); document.querySelectorAll('#days .day').forEach(b => b.setAttribute('aria-pressed', String(days.includes(+b.dataset.d)))); }
 $('days').innerHTML = DAYN.map((d, i) => `<button type="button" class="day" data-d="${i}" aria-pressed="${days.includes(i)}">${d}</button>`).join('');
 $('days').addEventListener('click', e => {
   const b = e.target.closest('.day'); if (!b) return; const d = +b.dataset.d;
@@ -318,13 +326,17 @@ function setDefaultDate() { // today's date and the current time
   $('f-date').value = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
   $('f-time').value = p(d.getHours()) + ':' + p(d.getMinutes());
 }
-function setCycleStart(d) {
+const nextHour = () => { const d = new Date(now()); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1); return d; };
+function setFirstWindow(d) { // the cycle is set by when its first visible window starts
   const p = n => String(n).padStart(2, '0');
   $('f-cdate').value = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
   $('f-ctime').value = p(d.getHours()) + ':' + p(d.getMinutes());
   cyclePreview();
 }
-function cycleStart() { const v = new Date($('f-cdate').value + 'T' + ($('f-ctime').value || '00:00')).getTime(); return v || null; }
+function cycleStart() {
+  const v = new Date($('f-cdate').value + 'T' + ($('f-ctime').value || '00:00')).getTime(), lock = +$('f-cl').value * +$('f-clunit').value;
+  return v && lock > 0 ? v - lock : null;
+}
 function cyclePreview() { // show the next few windows so the timing is easy to check
   const s = cycleStart(), lock = +$('f-cl').value * +$('f-clunit').value, open = +$('f-co').value * +$('f-counit').value;
   if (!s || !(lock > 0) || !(open > 0)) { $('cPreview').textContent = ''; return; }
@@ -437,51 +449,146 @@ function toast(msg) {
   const el = $('toast');
   el.textContent = msg; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => { el.hidden = true; }, 12000);
 }
-$('cNow').addEventListener('click', () => setCycleStart(new Date()));
-$('cHour').addEventListener('click', () => { const d = new Date(); d.setMinutes(0, 0, 0); setCycleStart(d); });
-$('cNext').addEventListener('click', () => { const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1); setCycleStart(d); });
+$('cNow').addEventListener('click', () => { const lock = +$('f-cl').value * +$('f-clunit').value || 0; setFirstWindow(new Date(Math.round((now() + lock) / 60000) * 60000)); });
+$('cNext').addEventListener('click', () => setFirstWindow(nextHour()));
 ['f-cdate', 'f-ctime', 'f-cl', 'f-clunit', 'f-co', 'f-counit'].forEach(id => $(id).addEventListener('input', cyclePreview));
 setDefaultDate();
-setCycleStart(new Date());
+setFirstWindow(nextHour());
+
+/* Reads the timing settings from the form. Returns { S } or { error }. */
+const TIMING = ['mode', 'unlockAt', 'days', 'from', 'to', 'lockMs', 'openMs', 'start', 'excl', 'peekSec', 'once'];
+function readSettings(t, allowPast) {
+  const n = id => +$(id).value, S = { mode };
+  if (mode === 'until') {
+    const v = new Date($('f-date').value + 'T' + ($('f-time').value || '00:00')).getTime();
+    if (!v) return { error: 'Pick an unlock date and time.' };
+    if (v <= t && !allowPast) return { error: 'That time has already passed. Pick a later date or time.' };
+    S.unlockAt = v;
+  }
+  if (mode === 'duration') { if (!(n('f-dur') > 0)) return { error: 'Enter how long to lock it.' }; S.unlockAt = t + n('f-dur') * n('f-durunit'); }
+  if (mode === 'schedule') {
+    if (!days.length) return { error: 'Pick at least one day.' };
+    if ($('f-from').value === $('f-to').value) return { error: 'Start and end times must differ.' };
+    Object.assign(S, { days: days.slice(), from: $('f-from').value, to: $('f-to').value });
+  }
+  if (mode === 'cycle') {
+    if (!(n('f-cl') > 0 && n('f-co') > 0)) return { error: 'Enter both cycle lengths.' };
+    Object.assign(S, { lockMs: n('f-cl') * n('f-clunit'), openMs: n('f-co') * n('f-counit'), start: cycleStart() });
+    if (!S.start) return { error: 'Pick when the first window starts.' };
+    if (exProblem(exRules)) return { error: exProblem(exRules) };
+    if (exRules.length) S.excl = { tz: LOCAL_TZ, rules: JSON.parse(JSON.stringify(exRules)) };
+  }
+  S.peekSec = $('o-peek').checked ? Math.max(1, n('o-peeksec') || 10) : 0;
+  S.once = $('o-once').checked && (mode === 'schedule' || mode === 'cycle');
+  const first = firstOpening(S, t);
+  if (!first) return { error: mode === 'cycle' ? 'With these exclusions the number would never be visible.' : 'That schedule has no upcoming window.' };
+  return { S };
+}
+const firstOpening = (S, t) => (S.mode === 'schedule' || S.mode === 'cycle') ? nextWindowStart(S, t) : S.unlockAt;
+function applyTiming(L, S) { TIMING.forEach(k => delete L[k]); Object.assign(L, JSON.parse(JSON.stringify(S))); }
 
 $('form').addEventListener('submit', async e => {
   e.preventDefault();
   const err = $('err'); err.hidden = true;
   const fail = m => { err.textContent = m; err.hidden = false; };
+  if (editId2) return saveEdit(fail);
   const t = now(), n = id => +$(id).value;
   const num = $('f-num').value.trim(); if (!num) return fail('Enter the number you want to lock.');
-  const L = { id: Math.random().toString(36).slice(2) + t.toString(36), label: $('f-label').value.trim() || 'Untitled lock', mode, created: t, rev: 1, updated: t };
-  if (mode === 'until') {
-    const v = new Date($('f-date').value + 'T' + ($('f-time').value || '00:00')).getTime();
-    if (!v) return fail('Pick an unlock date and time.');
-    if (v <= t) return fail('That time has already passed. Pick a later date or time.');
-    L.unlockAt = v;
-  }
-  if (mode === 'duration') { if (!(n('f-dur') > 0)) return fail('Enter how long to lock it.'); L.unlockAt = t + n('f-dur') * n('f-durunit'); }
-  if (mode === 'schedule') { if (!days.length) return fail('Pick at least one day.'); if ($('f-from').value === $('f-to').value) return fail('Start and end times must differ.'); L.days = days.slice(); L.from = $('f-from').value; L.to = $('f-to').value; }
-  if (mode === 'cycle') { if (!(n('f-cl') > 0 && n('f-co') > 0)) return fail('Enter both cycle lengths.'); L.lockMs = n('f-cl') * n('f-clunit'); L.openMs = n('f-co') * n('f-counit'); L.start = cycleStart(); if (!L.start) return fail('Pick when the cycle starts.');
-    if (exProblem(exRules)) return fail(exProblem(exRules));
-    if (exRules.length) L.excl = { tz: LOCAL_TZ, rules: JSON.parse(JSON.stringify(exRules)) };
-    if (!nextWindowStart(L, t)) return fail('With these exclusions the number would never be visible.');
-  }
-  L.peekSec = $('o-peek').checked ? Math.max(1, n('o-peeksec') || 10) : 0;
-  L.once = $('o-once').checked && repeating(L);
+  const r = readSettings(t); if (r.error) return fail(r.error);
+  const L = Object.assign({ id: Math.random().toString(36).slice(2) + t.toString(36), label: $('f-label').value.trim() || 'Untitled lock', created: t, rev: 1, updated: t }, r.S);
   L.pinned = $('f-pin').checked;
   setNotify(L, ntfyTopic ? $('f-notify').value : 'off');
-  const first = repeating(L) ? nextWindowStart(L, t) : L.unlockAt;
-  if (!first) return fail('That schedule has no upcoming window.');
   const btn = $('submit'); btn.disabled = true; btn.textContent = 'Sealing…';
   try {
-    L.capsule = await seal(first, num);
+    L.capsule = await seal(firstOpening(L, t), num);
     if ($('o-safe').checked) {
       const safeAt = t + (Math.max(1, n('o-safen')) || 7) * n('o-safeunit');
       if (repeating(L) || safeAt < L.unlockAt) L.safety = await seal(safeAt, num);
     }
     locks.unshift(L); save(); bookAll();
-    $('f-num').value = ''; $('f-label').value = ''; $('f-pin').checked = false; setDefaultDate(); setCycleStart(new Date());
+    $('f-num').value = ''; $('f-label').value = ''; $('f-pin').checked = false; setDefaultDate(); setFirstWindow(nextHour());
   } catch (ex) { fail('Sealing failed: ' + ex.message); }
   finally { btn.disabled = false; btn.textContent = 'Seal it'; render(); }
 });
+
+/* ---------- editing a lock's timing ----------
+   Number known (lock open here): re-seal under the new settings now.
+   Sealed: if the new first opening is the same or later, wrap the seal to it now.
+   If it would open sooner, save it as a pending change, applied at the next unlock. */
+let editId2 = null;
+const pad2 = n => String(n).padStart(2, '0');
+const dateVal = d => d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+const timeVal = d => pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+function setLen(numId, unitId, ms) { const u = [86400000, 3600000, 60000].find(u => ms % u === 0) || 60000; $(unitId).value = String(u); $(numId).value = String(ms / u); }
+function startEdit(L) {
+  const src = L.pending ? Object.assign({}, L, L.pending) : L;
+  editId2 = L.id;
+  $('formTitle').textContent = 'Edit "' + L.label + '"';
+  $('editNote').hidden = false;
+  $('editNote').textContent = L.opened || mem[L.id] ? 'This lock is open, so any change applies straight away.'
+    : 'Changes that make it open later apply straight away. Changes that would make it open sooner are saved and applied at the next unlock, ' + when(L.capsule ? L.capsule.at : now()) + '.';
+  ['numRow', 'safeSect', 'pinRow', 'notifyRow'].forEach(id => { $(id).hidden = true; });
+  $('editCancel').hidden = false; $('submit').textContent = 'Save changes'; $('err').hidden = true;
+  $('f-label').value = L.label;
+  const m = src.mode === 'duration' ? 'until' : src.mode;
+  setMode(m);
+  if (m === 'until') { const d = new Date(src.unlockAt); $('f-date').value = dateVal(d); $('f-time').value = timeVal(d); }
+  if (m === 'schedule') { setDays(src.days); $('f-from').value = src.from; $('f-to').value = src.to; }
+  if (m === 'cycle') {
+    setLen('f-cl', 'f-clunit', src.lockMs); setLen('f-co', 'f-counit', src.openMs);
+    exRules = JSON.parse(JSON.stringify((src.excl && src.excl.rules) || [])); renderEx();
+    const ws = !L.pending && L.capsule ? cycleWindowStartAt(src, L.capsule.at) : nextWindowStart(src, now()) || src.start + src.lockMs;
+    setFirstWindow(new Date(ws));
+  }
+  $('o-peek').checked = !!src.peekSec; if (src.peekSec) $('o-peeksec').value = src.peekSec; $('o-once').checked = !!src.once;
+  $('form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function endEdit() {
+  editId2 = null;
+  $('formTitle').textContent = 'New lock'; $('editNote').hidden = true;
+  ['numRow', 'safeSect', 'pinRow', 'notifyRow'].forEach(id => { $(id).hidden = false; });
+  $('editCancel').hidden = true; $('submit').textContent = 'Seal it'; $('err').hidden = true;
+  $('f-label').value = ''; exRules = []; renderEx(); setDefaultDate(); setFirstWindow(nextHour());
+}
+$('editCancel').addEventListener('click', endEdit);
+async function saveEdit(fail) {
+  const L = locks.find(l => l.id === editId2 && !l.deleted); if (!L) return endEdit();
+  if (busy[L.id]) return fail('This lock is busy unlocking. Try again in a moment.');
+  const t = now(), num = L.opened ? plain[L.id] : mem[L.id] ? mem[L.id].num : null;
+  const r = readSettings(t, !!L.opened); if (r.error) return fail(r.error);
+  const S = r.S, label = $('f-label').value.trim() || L.label;
+  const btn = $('submit'); btn.disabled = true; btn.textContent = 'Saving…'; busy[L.id] = true;
+  let note;
+  try {
+    if (num != null) {
+      applyTiming(L, S); delete L.pending; delete mem[L.id];
+      if (repeating(L)) {
+        const w = currentWindow(L, t);
+        L.capsule = await seal(nextWindowStart(L, w ? w.end - 1 : t), num);
+        if (L.opened) { L.opened = null; delete plain[L.id]; savePlain(); }
+        if (w) mem[L.id] = { num, until: w.end, win: w.start };
+        note = w ? 'Visible until ' + when(w.end) + ', then sealed until ' + when(L.capsule.at) + '.' : 'Sealed until ' + when(L.capsule.at) + '.';
+      } else if (L.unlockAt > t) {
+        L.capsule = await seal(L.unlockAt, num);
+        if (L.opened) { L.opened = null; delete plain[L.id]; savePlain(); }
+        note = 'Sealed until ' + when(L.capsule.at) + '.';
+      } else note = 'Saved.';
+    } else if (L.capsule) {
+      const first = firstOpening(S, t);
+      if (first >= L.capsule.at - 3000) {
+        const rd = engine.roundFor(first);
+        if (rd > L.capsule.round) L.capsule = { round: rd, at: engine.timeOf(rd), ct: await engine.encrypt(rd, L.capsule.ct) };
+        applyTiming(L, S); delete L.pending;
+        note = 'Applied now. Next opens ' + when(L.capsule.at) + '.';
+      } else {
+        L.pending = JSON.parse(JSON.stringify(S));
+        note = "Saved as a pending change. It would open sooner than the current seal allows, so it applies at the next unlock, " + when(L.capsule.at) + '.';
+      }
+    } else { applyTiming(L, S); note = 'Saved.'; }
+    L.label = label; touch(L); save(); bookAll(); endEdit(); toast(note);
+  } catch (ex) { fail('Saving failed: ' + ex.message); }
+  finally { delete busy[L.id]; btn.disabled = false; if (!editId2) btn.textContent = 'Seal it'; render(); }
+}
 
 /* ---------- backup ---------- */
 let exportText = '';
@@ -523,7 +630,7 @@ function merge(remote) {
     const l = byId.get(r.id);
     if (!l) { locks.push(r); if (!r.deleted) added++; changed = true; continue; }
     const c = newer(r, l);
-    if (c > 0) { Object.keys(l).forEach(k => delete l[k]); Object.assign(l, r); changed = true; if (r.deleted) { delete mem[r.id]; if (plain[r.id] != null) { delete plain[r.id]; savePlain(); } } }
+    if (c > 0) { Object.keys(l).forEach(k => delete l[k]); Object.assign(l, r); changed = true; if (!r.opened && plain[r.id] != null) { delete plain[r.id]; savePlain(); } if (r.deleted) { delete mem[r.id]; if (plain[r.id] != null) { delete plain[r.id]; savePlain(); } } }
     else if (c < 0) needPush = true;
   }
   if (locks.some(l => !seen.has(l.id))) needPush = true;

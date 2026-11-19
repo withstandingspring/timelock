@@ -111,16 +111,17 @@ button.btn.danger{color:var(--warn)}
   </section>
 
   <form class="panel" id="form" autocomplete="off">
-    <h2>New lock</h2>
+    <h2 id="formTitle">New lock</h2>
+    <p class="note" id="editNote" hidden></p>
     <div class="row">
       <label>Name<input id="f-label" placeholder="e.g. Safe combination" maxlength="60"></label>
-      <label>Number or code<input id="f-num" type="text" inputmode="numeric" placeholder="e.g. 4821" spellcheck="false"></label>
+      <label id="numRow">Number or code<input id="f-num" type="text" inputmode="numeric" placeholder="e.g. 4821" spellcheck="false"></label>
     </div>
 
     <div class="row" id="notifyRow">
       <label>Notify me when it unlocks<select id="f-notify"><option value="always">Always</option><option value="quiet">Not during quiet hours</option><option value="off">Off</option></select><small id="notifyHint" style="font-weight:400;color:var(--muted)">Set up notifications further down the page first.</small></label>
     </div>
-    <label class="check"><input type="checkbox" id="f-pin"><span>Pin to top<small>Shows this lock at the top of the page, above New lock.</small></span></label>
+    <label class="check" id="pinRow"><input type="checkbox" id="f-pin"><span>Pin to top<small>Shows this lock at the top of the page, above New lock.</small></span></label>
 
     <div>
       <div style="font-weight:600;font-size:.88rem;margin-bottom:6px">When can it be seen?</div>
@@ -156,13 +157,12 @@ button.btn.danger{color:var(--warn)}
         <label>Unit<select id="f-counit"><option value="60000" selected>minutes</option><option value="3600000">hours</option><option value="86400000">days</option></select></label>
       </div>
       <div class="row">
-        <label>Cycle starts on<input id="f-cdate" type="date"></label>
+        <label>First visible window on<input id="f-cdate" type="date"></label>
         <label>at<input id="f-ctime" type="time"></label>
       </div>
       <div class="actions">
-        <button class="btn" type="button" id="cNow">Now</button>
-        <button class="btn" type="button" id="cHour">Start of this hour</button>
         <button class="btn" type="button" id="cNext">Next full hour</button>
+        <button class="btn" type="button" id="cNow">One locked period from now</button>
       </div>
       <div class="sect">
         <div style="font-weight:600">Don't show during</div>
@@ -174,7 +174,7 @@ button.btn.danger{color:var(--warn)}
     </div>
     <p class="note" id="repeatNote" hidden>Repeating locks re-seal themselves while this page is open during a window. Open the page at least once in every window. If a window passes without it, the number stays openable by technical means until you next open the page.</p>
 
-    <div class="sect">
+    <div class="sect" id="safeSect">
       <label class="check"><input type="checkbox" id="o-safe" checked><span>Safety unlock<small>A second sealed copy that opens for good after this time, so the number can't stay locked forever. Untick to turn it off.</small></span></label>
       <div class="row">
         <label>Open after<input id="o-safen" type="number" min="1" value="7"></label>
@@ -192,7 +192,7 @@ button.btn.danger{color:var(--warn)}
     </details>
 
     <p class="err" id="err" hidden></p>
-    <div><button class="primary" type="submit" id="submit">Seal it</button></div>
+    <div class="actions"><button class="primary" type="submit" id="submit">Seal it</button><button class="btn" type="button" id="editCancel" hidden>Cancel editing</button></div>
   </form>
 
   <section style="display:flex;flex-direction:column;gap:12px">
@@ -301,9 +301,9 @@ button.btn.danger{color:var(--warn)}
     <p>The number itself is never saved before it unlocks. Only the sealed version is. Unlocking needs an internet connection to fetch the published key.</p>
     <p>Limits: once a number is shown, you know it. Repeating locks rely on this page re-sealing the number during each window. If drand stopped running before your unlock time, the number could not be recovered, so keep a separate backup of anything you can't afford to lose.</p>
   </details>
-  <p class="net" style="text-align:center;margin:0">Version 13</p>
+  <p class="net" style="text-align:center;margin:0">Version 14</p>
 </div>
 <script src="vendor/tlock.js?v=0.9.0"></script>
-<script src="app.js?v=13"></script>
+<script src="app.js?v=14"></script>
 </body>
 </html>
