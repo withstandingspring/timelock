@@ -75,6 +75,7 @@ button.btn.danger{color:var(--warn)}
 .actions .btn{padding:6px 11px;font-size:.85rem}
 .note{font-size:.82rem;color:var(--muted);border-left:3px solid var(--line);padding-left:10px;margin:0}
 .alert{background:var(--warn-soft);color:var(--warn);border-radius:8px;padding:10px 12px;font-size:.88rem}
+.exRule{border:1px solid var(--line);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:10px}
 .empty{color:var(--muted);text-align:center;padding:24px}
 .how p{margin:8px 0 0;color:var(--muted);font-size:.9rem}
 </style>
@@ -147,6 +148,12 @@ button.btn.danger{color:var(--warn)}
         <button class="btn" type="button" id="cNow">Now</button>
         <button class="btn" type="button" id="cHour">Start of this hour</button>
         <button class="btn" type="button" id="cNext">Next full hour</button>
+      </div>
+      <div class="sect">
+        <div style="font-weight:600">Don't show during</div>
+        <p class="note">Add periods when no window should open, like all day Wednesday, or 18:00 to 10:00 on chosen days. A time range that ends earlier than it starts runs into the next morning. Any window that overlaps one is skipped.</p>
+        <div id="exList" style="display:flex;flex-direction:column;gap:12px"></div>
+        <div><button class="btn" type="button" id="exAdd">Add exclusion</button></div>
       </div>
       <p class="note" id="cPreview"></p>
     </div>
@@ -279,9 +286,9 @@ button.btn.danger{color:var(--warn)}
     <p>The number itself is never saved before it unlocks. Only the sealed version is. Unlocking needs an internet connection to fetch the published key.</p>
     <p>Limits: once a number is shown, you know it. Repeating locks rely on this page re-sealing the number during each window. If drand stopped running before your unlock time, the number could not be recovered, so keep a separate backup of anything you can't afford to lose.</p>
   </details>
-  <p class="net" style="text-align:center;margin:0">Version 11</p>
+  <p class="net" style="text-align:center;margin:0">Version 12</p>
 </div>
 <script src="vendor/tlock.js?v=0.9.0"></script>
-<script src="app.js?v=11"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>

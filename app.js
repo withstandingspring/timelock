@@ -75,12 +75,40 @@ function schedIntervals(L, t) {
   }
   return out;
 }
+/* Exclusions for repeating cycles: periods (days + all day or a time range) when no window shows.
+   A time range that ends earlier than it starts runs from that day into the next morning.
+   A window that overlaps an exclusion at all is skipped. Times use the time zone saved with the lock. */
+const LOCAL_TZ = Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+const partFmt = {}, WD = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+function localParts(ms, tz) {
+  const f = partFmt[tz] || (partFmt[tz] = new Intl.DateTimeFormat('en-US', { timeZone: tz, weekday: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }));
+  const p = {}; for (const x of f.formatToParts(new Date(ms))) p[x.type] = x.value;
+  return { wd: WD[p.weekday], m: (+p.hour % 24) * 60 + +p.minute };
+}
+const toMin = s => { const [h, m] = s.split(':').map(Number); return h * 60 + m; };
+function inExclusion(ms, ex) {
+  const { wd, m } = localParts(ms, ex.tz || LOCAL_TZ), prev = (wd + 6) % 7;
+  return ex.rules.some(r => {
+    if (r.allDay) return r.days.includes(wd);
+    const f = toMin(r.from), e = toMin(r.to);
+    if (f < e) return r.days.includes(wd) && m >= f && m < e;
+    return (r.days.includes(wd) && m >= f) || (r.days.includes(prev) && m < e); // runs past midnight
+  });
+}
+function windowExcluded(L, s, e) {
+  if (!L.excl || !L.excl.rules || !L.excl.rules.length) return false;
+  const step = e - s <= 6 * 3600000 ? 60000 : 900000;
+  for (let t = s; t < e; t += step) if (inExclusion(t, L.excl)) return true;
+  return inExclusion(e - 60000, L.excl);
+}
+
 function currentWindow(L, t) {
   if (L.mode === 'schedule') { const w = schedIntervals(L, t).find(([s, e]) => t >= s && t < e); return w ? { start: w[0], end: w[1] } : null; }
   if (L.mode === 'cycle') {
     const P = L.lockMs + L.openMs, ph = (t - L.start) % P;
     if (t < L.start || ph < L.lockMs) return null;
-    return { start: t - ph + L.lockMs, end: t - ph + P };
+    const w = { start: t - ph + L.lockMs, end: t - ph + P };
+    return windowExcluded(L, w.start, w.end) ? null : w;
   }
   return null;
 }
@@ -92,7 +120,8 @@ function nextWindowStart(L, t) { // first window start strictly after t
   }
   const P = L.lockMs + L.openMs;
   const k = Math.max(0, Math.floor((t - L.start - L.lockMs) / P) + 1);
-  return L.start + k * P + L.lockMs;
+  for (let w = L.start + k * P + L.lockMs, i = 0; i < 5000; w += P, i++) if (!windowExcluded(L, w, w + L.openMs)) return w;
+  return null; // everything excluded
 }
 
 /* ---------- unlocking ---------- */
@@ -187,7 +216,7 @@ const when = ms => new Date(ms).toLocaleString(undefined, { weekday: 'short', mo
 function unitTxt(ms) { for (const [u, n] of [[604800000, 'week'], [86400000, 'day'], [3600000, 'hour'], [60000, 'minute']]) if (ms % u === 0) { const v = ms / u; return v + ' ' + n + (v === 1 ? '' : 's'); } return dur(ms); }
 function ruleTxt(L) {
   if (!repeating(L)) return 'Unlocks ' + when(L.unlockAt);
-  if (L.mode === 'cycle') return 'Locked ' + unitTxt(L.lockMs) + ', then visible ' + unitTxt(L.openMs) + ', repeating from ' + when(L.start);
+  if (L.mode === 'cycle') return 'Locked ' + unitTxt(L.lockMs) + ', then visible ' + unitTxt(L.openMs) + ', repeating from ' + when(L.start) + (L.excl && L.excl.rules.length ? ' · not during: ' + L.excl.rules.map(exclTxt).join('; ') : '');
   const ds = L.days.length === 7 ? 'Every day' : L.days.slice().sort().map(d => DAYN[d]).join(', ');
   return ds + ', ' + L.from + ' to ' + L.to;
 }
@@ -298,12 +327,44 @@ function cycleStart() { const v = new Date($('f-cdate').value + 'T' + ($('f-ctim
 function cyclePreview() { // show the next few windows so the timing is easy to check
   const s = cycleStart(), lock = +$('f-cl').value * +$('f-clunit').value, open = +$('f-co').value * +$('f-counit').value;
   if (!s || !(lock > 0) || !(open > 0)) { $('cPreview').textContent = ''; return; }
-  const L = { mode: 'cycle', start: s, lockMs: lock, openMs: open }, out = [];
+  const L = { mode: 'cycle', start: s, lockMs: lock, openMs: open, excl: exRules.length ? { tz: LOCAL_TZ, rules: exRules } : null }, out = [];
   const tf = ms => new Date(ms).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
   let w = nextWindowStart(L, now());
   for (let i = 0; i < 3 && w; i++) { out.push(tf(w) + ' to ' + new Date(w + open).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })); w = nextWindowStart(L, w); }
-  $('cPreview').textContent = 'Next visible: ' + out.join(' · ');
+  $('cPreview').textContent = out.length ? 'Next visible: ' + out.join(' · ') : 'With these exclusions it would never be visible.';
 }
+/* exclusion editor */
+let exRules = [];
+const dayList = days => days.length === 7 ? 'Every day' : days.slice().sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map(d => DAYN[d]).join(', ');
+const exclTxt = r => dayList(r.days) + ' ' + (r.allDay ? 'all day' : r.from + '–' + r.to + (toMin(r.to) <= toMin(r.from) ? ' (next morning)' : ''));
+function renderEx() {
+  $('exList').innerHTML = exRules.map((r, i) => `<div class="exRule">
+    <div class="days">${[1, 2, 3, 4, 5, 6, 0].map(d => `<button type="button" class="day" data-ex="${i}" data-d="${d}" aria-pressed="${r.days.includes(d)}">${DAYN[d]}</button>`).join('')}</div>
+    <div class="row">
+      <label class="check" style="align-self:end"><input type="checkbox" data-exall="${i}" ${r.allDay ? 'checked' : ''}><span>All day</span></label>
+      <label ${r.allDay ? 'hidden' : ''}>From<input type="time" data-exfrom="${i}" value="${r.from}"></label>
+      <label ${r.allDay ? 'hidden' : ''}>Until<input type="time" data-exto="${i}" value="${r.to}"></label>
+    </div>
+    <div><button type="button" class="btn danger" data-exdel="${i}">Remove</button></div>
+  </div>`).join('');
+  cyclePreview();
+}
+$('exAdd').addEventListener('click', () => { exRules.push({ days: [], allDay: false, from: '18:00', to: '10:00' }); renderEx(); });
+$('exList').addEventListener('click', e => {
+  const d = e.target.closest('[data-ex]'), del = e.target.closest('[data-exdel]');
+  if (d) { const r = exRules[+d.dataset.ex], v = +d.dataset.d; r.days = r.days.includes(v) ? r.days.filter(x => x !== v) : [...r.days, v]; renderEx(); }
+  if (del) { exRules.splice(+del.dataset.exdel, 1); renderEx(); }
+});
+$('exList').addEventListener('change', e => {
+  const t = e.target;
+  if (t.dataset.exall != null) { exRules[+t.dataset.exall].allDay = t.checked; renderEx(); }
+});
+$('exList').addEventListener('input', e => {
+  const t = e.target;
+  if (t.dataset.exfrom != null) exRules[+t.dataset.exfrom].from = t.value || '00:00';
+  if (t.dataset.exto != null) exRules[+t.dataset.exto].to = t.value || '00:00';
+  cyclePreview();
+});
 $('cNow').addEventListener('click', () => setCycleStart(new Date()));
 $('cHour').addEventListener('click', () => { const d = new Date(); d.setMinutes(0, 0, 0); setCycleStart(d); });
 $('cNext').addEventListener('click', () => { const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1); setCycleStart(d); });
@@ -326,7 +387,12 @@ $('form').addEventListener('submit', async e => {
   }
   if (mode === 'duration') { if (!(n('f-dur') > 0)) return fail('Enter how long to lock it.'); L.unlockAt = t + n('f-dur') * n('f-durunit'); }
   if (mode === 'schedule') { if (!days.length) return fail('Pick at least one day.'); if ($('f-from').value === $('f-to').value) return fail('Start and end times must differ.'); L.days = days.slice(); L.from = $('f-from').value; L.to = $('f-to').value; }
-  if (mode === 'cycle') { if (!(n('f-cl') > 0 && n('f-co') > 0)) return fail('Enter both cycle lengths.'); L.lockMs = n('f-cl') * n('f-clunit'); L.openMs = n('f-co') * n('f-counit'); L.start = cycleStart(); if (!L.start) return fail('Pick when the cycle starts.'); }
+  if (mode === 'cycle') { if (!(n('f-cl') > 0 && n('f-co') > 0)) return fail('Enter both cycle lengths.'); L.lockMs = n('f-cl') * n('f-clunit'); L.openMs = n('f-co') * n('f-counit'); L.start = cycleStart(); if (!L.start) return fail('Pick when the cycle starts.');
+    if (exRules.some(r => !r.days.length)) return fail('Pick at least one day for each exclusion, or remove it.');
+    if (exRules.some(r => !r.allDay && r.from === r.to)) return fail('An exclusion\'s start and end times must differ. Tick All day for a whole day.');
+    if (exRules.length) L.excl = { tz: LOCAL_TZ, rules: JSON.parse(JSON.stringify(exRules)) };
+    if (!nextWindowStart(L, t)) return fail('With these exclusions the number would never be visible.');
+  }
   L.peekSec = $('o-peek').checked ? Math.max(1, n('o-peeksec') || 10) : 0;
   L.once = $('o-once').checked && repeating(L);
   L.pinned = $('f-pin').checked;

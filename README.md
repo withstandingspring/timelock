@@ -10,7 +10,8 @@ doesn't help, because the key for that moment hasn't been published yet.
 - **Until a date**: unlocks at a set date and time.
 - **For a duration**: locked for a set time from now.
 - **On a schedule**: visible only on chosen weekdays between two times.
-- **Repeating cycle**: locked for X, visible for Y, repeating.
+- **Repeating cycle**: locked for X, visible for Y, repeating, from a chosen start time. Exclusions (days plus all day
+  or a time range, which can run past midnight) skip any window that overlaps them.
 
 Options: safety unlock (on by default, 7 days), adding time to a sealed lock, a brief reveal, and
 one reveal per window (repeating modes).
