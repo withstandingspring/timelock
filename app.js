@@ -50,7 +50,7 @@ const mem = {};    // id -> {num, until}  plaintext for an open repeating window
 const peeks = {};  // id -> ms when the brief reveal ends
 const busy = {};   // id -> true while unlocking or re-sealing
 const errs = {};   // id -> {msg, retryAt}
-let confirmDel = null, skew = 0, netOk = null;
+let confirmDel = null, confirmExt = null, skew = 0, netOk = null;
 
 function load() { try { const r = localStorage.getItem(KEY); return r ? JSON.parse(r) : []; } catch (e) { return []; } }
 function saveLocal() { try { localStorage.setItem(KEY, JSON.stringify(locks)); } catch (e) {} }
@@ -260,7 +260,12 @@ function cardHTML(L) {
     if (open && needsPeek && !visible && !usedUp) acts += `<button class="btn" data-act="peek" data-id="${L.id}">Reveal</button>`;
     if (m) acts += `<button class="btn" data-act="relock" data-id="${L.id}">Relock now</button>`;
     if (visible && needsPeek) acts += `<button class="btn" data-act="unpeek" data-id="${L.id}">Cover now</button>`;
-    if (!open && !repeating(L) && L.capsule && !busy[L.id]) acts += `<button class="btn" data-act="ext" data-ms="3600000" data-id="${L.id}">+1 hour</button><button class="btn" data-act="ext" data-ms="86400000" data-id="${L.id}">+1 day</button><button class="btn" data-act="ext" data-ms="604800000" data-id="${L.id}">+1 week</button>`;
+    if (!open && !repeating(L) && L.capsule && !busy[L.id]) {
+      if (confirmExt && confirmExt.id === L.id) {
+        const name = unitTxt(confirmExt.ms), at = engine.timeOf(engine.roundFor(L.capsule.at + confirmExt.ms));
+        acts += `<span class="rule">Add ${name}? It would open ${esc(when(at))} instead of ${esc(when(L.capsule.at))}. This can't be undone.</span><button class="btn danger" data-act="extgo" data-id="${L.id}">Confirm +${name}</button><button class="btn" data-act="extno">Cancel</button>`;
+      } else acts += [[3600000, '+1 hour'], [86400000, '+1 day'], [604800000, '+1 week']].map(([ms, t]) => `<button class="btn" data-act="ext" data-ms="${ms}" data-id="${L.id}">${t}</button>`).join('');
+    }
     if (confirmDel === L.id) acts += `<span class="rule">Delete this lock? ${open ? '' : 'The number will be gone for good.'}</span><button class="btn danger" data-act="delgo" data-id="${L.id}">Delete</button><button class="btn" data-act="delno">Keep</button>`;
     else acts += (ntfyTopic && !L.opened ? `<button class="btn" data-act="notify" data-id="${L.id}">Notify: ${!L.notify ? 'off' : L.notify === 'quiet' ? 'not during quiet hours' : 'always'}</button>` : '') + `<button class="btn" data-act="edit" data-id="${L.id}">Edit</button>` + (L.mode === 'cycle' && !L.opened ? `<button class="btn" data-act="excl" data-id="${L.id}">Exclusions</button>` : '') + `<button class="btn" data-act="pin" data-id="${L.id}">${L.pinned ? 'Unpin' : 'Pin to top'}</button><button class="btn danger" data-act="del" data-id="${L.id}">Delete</button>`;
     const extra = [];
@@ -294,7 +299,9 @@ function onCardClick(e) {
     setNotify(L, !L.notify ? 'always' : L.notify === 'quiet' ? 'off' : 'quiet');
     if (!L.notify) cancelBookings(L); touch(L); save(); if (L.notify) bookAll();
   }
-  if (a === 'ext') { extend(L, +b.dataset.ms); return; }
+  if (a === 'ext') { const c = confirmExt = { id: L.id, ms: +b.dataset.ms }; setTimeout(() => { if (confirmExt === c) { confirmExt = null; render(); } }, 15000); }
+  if (a === 'extno') confirmExt = null;
+  if (a === 'extgo' && confirmExt && confirmExt.id === L.id) { const ms = confirmExt.ms; confirmExt = null; extend(L, ms); return; }
   if (a === 'del') confirmDel = L.id;
   if (a === 'delno') confirmDel = null;
   if (a === 'delgo') { // keep a deletion marker so other devices delete it too
