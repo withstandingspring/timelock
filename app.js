@@ -56,7 +56,7 @@ function load() { try { const r = localStorage.getItem(KEY); return r ? JSON.par
 function saveLocal() { try { localStorage.setItem(KEY, JSON.stringify(locks)); } catch (e) {} }
 function save() { saveLocal(); schedulePush(); }
 function touch(L) { L.rev = (L.rev || 0) + 1; L.updated = Date.now(); }
-const live = () => locks.filter(l => !l.deleted).sort((a, b) => (b.created || 0) - (a.created || 0));
+const live = () => locks.filter(l => !l.deleted).sort((a, b) => (!!b.pinned - !!a.pinned) || ((b.created || 0) - (a.created || 0)));
 const now = () => Date.now();
 const repeating = L => L.mode === 'schedule' || L.mode === 'cycle';
 
@@ -193,13 +193,13 @@ function render() {
     if (visible && needsPeek) acts += `<button class="btn" data-act="unpeek" data-id="${L.id}">Cover now</button>`;
     if (!open && !repeating(L) && L.capsule && !busy[L.id]) acts += `<button class="btn" data-act="ext" data-ms="3600000" data-id="${L.id}">+1 hour</button><button class="btn" data-act="ext" data-ms="86400000" data-id="${L.id}">+1 day</button><button class="btn" data-act="ext" data-ms="604800000" data-id="${L.id}">+1 week</button>`;
     if (confirmDel === L.id) acts += `<span class="rule">Delete this lock? ${open ? '' : 'The number will be gone for good.'}</span><button class="btn danger" data-act="delgo" data-id="${L.id}">Delete</button><button class="btn" data-act="delno">Keep</button>`;
-    else acts += `<button class="btn danger" data-act="del" data-id="${L.id}">Delete</button>`;
+    else acts += `<button class="btn" data-act="pin" data-id="${L.id}">${L.pinned ? 'Unpin' : 'Pin to top'}</button><button class="btn danger" data-act="del" data-id="${L.id}">Delete</button>`;
     const extra = [];
     if (L.safety) extra.push('safety unlock ' + when(L.safety.at));
     if (L.once && repeating(L)) extra.push('one reveal per window');
     if (L.peekSec) extra.push('brief reveal ' + L.peekSec + 's');
-    return `<article class="card${visible ? ' open' : ''}">
-      <div class="top"><h3>${esc(L.label)}</h3><span class="pill ${pill[0]}">${pill[1]}</span></div>
+    return `<article class="card${visible ? ' open' : ''}${L.pinned ? ' pinned' : ''}">
+      <div class="top"><h3>${L.pinned ? '<span class="pin">Pinned</span>' : ''}${esc(L.label)}</h3><span class="pill ${pill[0]}">${pill[1]}</span></div>
       <div class="digits${visible ? '' : ' hidden'}">${visible ? esc(num) : '••••••'}</div>
       <div class="count">${esc(count)}</div>
       <div class="rule">${esc(ruleTxt(L))}${extra.length ? ' · ' + esc(extra.join(' · ')) : ''}</div>
@@ -214,6 +214,7 @@ $('list').addEventListener('click', e => {
   const L = locks.find(l => l.id === b.dataset.id), a = b.dataset.act, t = now();
   if (a === 'peek') { const m = mem[L.id]; peeks[L.id] = t + (L.peekSec ? L.peekSec * 1000 : 30000); if (m && L.once) { L.usedWin = m.win; touch(L); save(); } }
   if (a === 'unpeek') delete peeks[L.id];
+  if (a === 'pin') { L.pinned = !L.pinned; touch(L); save(); }
   if (a === 'ext') { extend(L, +b.dataset.ms); return; }
   if (a === 'del') confirmDel = L.id;
   if (a === 'delno') confirmDel = null;
@@ -239,12 +240,12 @@ $('days').addEventListener('click', e => {
   days = days.includes(d) ? days.filter(x => x !== d) : [...days, d]; b.setAttribute('aria-pressed', String(days.includes(d)));
 });
 $('o-safe').addEventListener('change', () => { $('o-safen').disabled = $('o-safeunit').disabled = !$('o-safe').checked; });
-(function defaultDate() { // today, one hour from now (or 23:59 if that crosses midnight)
-  const n0 = new Date(), d = new Date(n0.getTime() + 3600000);
-  if (d.getDate() !== n0.getDate()) { d.setTime(n0.getTime()); d.setHours(23, 59); }
-  d.setSeconds(0, 0); d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-  $('f-until').value = d.toISOString().slice(0, 16);
-})();
+function setDefaultDate() { // today's date and the current time
+  const d = new Date(), p = n => String(n).padStart(2, '0');
+  $('f-date').value = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  $('f-time').value = p(d.getHours()) + ':' + p(d.getMinutes());
+}
+setDefaultDate();
 
 $('form').addEventListener('submit', async e => {
   e.preventDefault();
@@ -253,12 +254,18 @@ $('form').addEventListener('submit', async e => {
   const t = now(), n = id => +$(id).value;
   const num = $('f-num').value.trim(); if (!num) return fail('Enter the number you want to lock.');
   const L = { id: Math.random().toString(36).slice(2) + t.toString(36), label: $('f-label').value.trim() || 'Untitled lock', mode, created: t, rev: 1, updated: t };
-  if (mode === 'until') { const v = new Date($('f-until').value).getTime(); if (!v || v <= t) return fail('Pick an unlock time in the future.'); L.unlockAt = v; }
+  if (mode === 'until') {
+    const v = new Date($('f-date').value + 'T' + ($('f-time').value || '00:00')).getTime();
+    if (!v) return fail('Pick an unlock date and time.');
+    if (v <= t) return fail('That time has already passed. Pick a later date or time.');
+    L.unlockAt = v;
+  }
   if (mode === 'duration') { if (!(n('f-dur') > 0)) return fail('Enter how long to lock it.'); L.unlockAt = t + n('f-dur') * n('f-durunit'); }
   if (mode === 'schedule') { if (!days.length) return fail('Pick at least one day.'); if ($('f-from').value === $('f-to').value) return fail('Start and end times must differ.'); L.days = days.slice(); L.from = $('f-from').value; L.to = $('f-to').value; }
   if (mode === 'cycle') { if (!(n('f-cl') > 0 && n('f-co') > 0)) return fail('Enter both cycle lengths.'); L.lockMs = n('f-cl') * n('f-clunit'); L.openMs = n('f-co') * n('f-counit'); L.start = t; }
   L.peekSec = $('o-peek').checked ? Math.max(1, n('o-peeksec') || 10) : 0;
   L.once = $('o-once').checked && repeating(L);
+  L.pinned = $('f-pin').checked;
   const first = repeating(L) ? nextWindowStart(L, t) : L.unlockAt;
   if (!first) return fail('That schedule has no upcoming window.');
   const btn = $('submit'); btn.disabled = true; btn.textContent = 'Sealing…';
@@ -269,7 +276,7 @@ $('form').addEventListener('submit', async e => {
       if (repeating(L) || safeAt < L.unlockAt) L.safety = await seal(safeAt, num);
     }
     locks.unshift(L); save();
-    $('f-num').value = ''; $('f-label').value = '';
+    $('f-num').value = ''; $('f-label').value = ''; $('f-pin').checked = false; setDefaultDate();
   } catch (ex) { fail('Sealing failed: ' + ex.message); }
   finally { btn.disabled = false; btn.textContent = 'Seal it'; render(); }
 });

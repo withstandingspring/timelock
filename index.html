@@ -58,6 +58,9 @@ button.btn.danger{color:var(--warn)}
 .list{display:flex;flex-direction:column;gap:12px}
 .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px;display:flex;flex-direction:column;gap:10px}
 .card.open{border-color:var(--ok)}
+.card.pinned{border-width:2px;border-color:var(--brass)}
+.card.pinned.open{border-color:var(--ok)}
+.pin{color:var(--brass);font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;margin-right:6px}
 .top{display:flex;justify-content:space-between;align-items:flex-start;gap:10px}
 .top h3{margin:0;font-size:1.05rem;min-width:0;overflow-wrap:anywhere}
 .pill{font-size:.75rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding:3px 9px;border-radius:999px;white-space:nowrap}
@@ -93,6 +96,8 @@ button.btn.danger{color:var(--warn)}
       <label>Number or code<input id="f-num" type="text" inputmode="numeric" placeholder="e.g. 4821" spellcheck="false"></label>
     </div>
 
+    <label class="check"><input type="checkbox" id="f-pin"><span>Pin to top<small>Keeps this lock above the others in your list.</small></span></label>
+
     <div>
       <div style="font-weight:600;font-size:.88rem;margin-bottom:6px">When can it be seen?</div>
       <div class="modes" id="modes">
@@ -104,7 +109,8 @@ button.btn.danger{color:var(--warn)}
     </div>
 
     <div id="m-until" class="row">
-      <label>Unlock at<input id="f-until" type="datetime-local"></label>
+      <label>Unlock date<input id="f-date" type="date"></label>
+      <label>Unlock time<input id="f-time" type="time"></label>
     </div>
     <div id="m-duration" class="row" hidden>
       <label>Lock for<input id="f-dur" type="number" min="1" value="24"></label>
