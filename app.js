@@ -272,6 +272,7 @@ function cardHTML(L) {
     if (L.safety) extra.push('safety unlock ' + when(L.safety.at));
     if (L.once && repeating(L)) extra.push('one reveal per window');
     if (L.peekSec) extra.push('brief reveal ' + L.peekSec + 's');
+    if (L.protect) extra.push('protected from deletion');
     if (L.pending) extra.push('change waiting for the next unlock: ' + ruleTxt(Object.assign({}, L, L.pending)));
     return `<article class="card${visible ? ' open' : ''}${L.pinned ? ' pinned' : ''}">
       <div class="top"><h3>${esc(L.label)}</h3><span class="pill ${pill[0]}">${pill[1]}</span></div>
@@ -302,16 +303,33 @@ function onCardClick(e) {
   if (a === 'ext') { const c = confirmExt = { id: L.id, ms: +b.dataset.ms }; setTimeout(() => { if (confirmExt === c) { confirmExt = null; render(); } }, 15000); }
   if (a === 'extno') confirmExt = null;
   if (a === 'extgo' && confirmExt && confirmExt.id === L.id) { const ms = confirmExt.ms; confirmExt = null; extend(L, ms); return; }
-  if (a === 'del') confirmDel = L.id;
+  if (a === 'del') { if (L.protect) { openDelPanel(L); return; } confirmDel = L.id; }
   if (a === 'delno') confirmDel = null;
-  if (a === 'delgo') { // keep a deletion marker so other devices delete it too
-    cancelBookings(L);
-    const rev = (L.rev || 0) + 1, id = L.id;
-    Object.keys(L).forEach(k => delete L[k]); Object.assign(L, { id, deleted: true, rev, updated: Date.now() });
-    delete mem[id]; delete plain[id]; savePlain(); confirmDel = null; save();
-  }
+  if (a === 'delgo' && !L.protect) deleteLock(L);
   render();
 }
+function deleteLock(L) { // keep a deletion marker so other devices delete it too
+  cancelBookings(L);
+  const rev = (L.rev || 0) + 1, id = L.id;
+  Object.keys(L).forEach(k => delete L[k]); Object.assign(L, { id, deleted: true, rev, updated: Date.now() });
+  delete mem[id]; delete plain[id]; savePlain(); confirmDel = null; save();
+}
+/* protected locks: deleting needs the lock's name typed in */
+let delId = null;
+const delLock = () => locks.find(l => l.id === delId && !l.deleted);
+const nameMatches = (typed, L) => typed.trim().toLowerCase() === L.label.trim().toLowerCase();
+function openDelPanel(L) {
+  delId = L.id; $('delName').value = ''; $('delGo').disabled = true;
+  $('delText').textContent = '"' + L.label + '" is protected. ' + (L.opened || mem[L.id] ? 'Deleting it removes it from all your devices.' : 'It is still locked, so deleting it loses the number for good.') + ' Type its name below to delete it.';
+  $('delPanel').hidden = false; $('delPanel').scrollIntoView({ behavior: 'smooth', block: 'start' }); $('delName').focus({ preventScroll: true });
+}
+function closeDelPanel() { delId = null; $('delPanel').hidden = true; }
+$('delName').addEventListener('input', () => { const L = delLock(); $('delGo').disabled = !L || !nameMatches($('delName').value, L); });
+$('delCancel').addEventListener('click', closeDelPanel);
+$('delGo').addEventListener('click', () => {
+  const L = delLock(); if (!L || !nameMatches($('delName').value, L)) return;
+  const name = L.label; deleteLock(L); closeDelPanel(); render(); toast('Deleted "' + name + '".');
+});
 $('list').addEventListener('click', onCardClick);
 $('pinned').addEventListener('click', onCardClick);
 
@@ -508,6 +526,7 @@ $('form').addEventListener('submit', async e => {
   const r = readSettings(t); if (r.error) return fail(r.error);
   const L = Object.assign({ id: Math.random().toString(36).slice(2) + t.toString(36), label: $('f-label').value.trim() || 'Untitled lock', created: t, rev: 1, updated: t }, r.S);
   L.pinned = $('f-pin').checked;
+  L.protect = $('f-protect').checked;
   setNotify(L, ntfyTopic ? $('f-notify').value : 'off');
   const btn = $('submit'); btn.disabled = true; btn.textContent = 'Sealing…';
   try {
@@ -517,7 +536,7 @@ $('form').addEventListener('submit', async e => {
       if (repeating(L) || safeAt < L.unlockAt) L.safety = await seal(safeAt, num);
     }
     locks.unshift(L); save(); bookAll();
-    $('f-num').value = ''; $('f-label').value = ''; $('f-pin').checked = false; setDefaultDate(); setFirstWindow(nextHour());
+    $('f-num').value = ''; $('f-label').value = ''; $('f-pin').checked = false; $('f-protect').checked = false; setDefaultDate(); setFirstWindow(nextHour());
   } catch (ex) { fail('Sealing failed: ' + ex.message); }
   finally { btn.disabled = false; btn.textContent = 'Seal it'; render(); }
 });
@@ -551,7 +570,7 @@ function startEdit(L) {
     const ws = !L.pending && L.capsule ? cycleWindowStartAt(src, L.capsule.at) : nextWindowStart(src, now()) || src.start + src.lockMs;
     setFirstWindow(new Date(ws));
   }
-  $('o-peek').checked = !!src.peekSec; if (src.peekSec) $('o-peeksec').value = src.peekSec; $('o-once').checked = !!src.once;
+  $('o-peek').checked = !!src.peekSec; if (src.peekSec) $('o-peeksec').value = src.peekSec; $('o-once').checked = !!src.once; $('f-protect').checked = !!L.protect;
   $('form').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 function endEdit() {
@@ -559,7 +578,7 @@ function endEdit() {
   $('formTitle').textContent = 'New lock'; $('editNote').hidden = true;
   ['numRow', 'safeSect', 'pinRow', 'notifyRow'].forEach(id => { $(id).hidden = false; });
   $('editCancel').hidden = true; $('submit').textContent = 'Seal it'; $('err').hidden = true;
-  $('f-label').value = ''; exRules = []; renderEx(); setDefaultDate(); setFirstWindow(nextHour());
+  $('f-label').value = ''; $('f-protect').checked = false; exRules = []; renderEx(); setDefaultDate(); setFirstWindow(nextHour());
 }
 $('editCancel').addEventListener('click', endEdit);
 async function saveEdit(fail) {
@@ -596,7 +615,8 @@ async function saveEdit(fail) {
         note = "Saved as a pending change. It would open sooner than the current seal allows, so it applies at the next unlock, " + when(L.capsule.at) + '.';
       }
     } else { applyTiming(L, S); note = 'Saved.'; }
-    L.label = label; touch(L); save(); bookAll(); endEdit(); toast(note);
+    L.label = label; if ($('f-protect').checked) L.protect = true; else delete L.protect;
+    touch(L); save(); bookAll(); endEdit(); toast(note);
   } catch (ex) { fail('Saving failed: ' + ex.message); }
   finally { delete busy[L.id]; btn.disabled = false; if (!editId2) btn.textContent = 'Seal it'; render(); }
 }

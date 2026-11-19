@@ -105,6 +105,16 @@ button.btn.danger{color:var(--warn)}
 
   <p class="ok" id="toast" role="status" hidden></p>
 
+  <section class="panel" id="delPanel" hidden>
+    <h2>Delete protected lock</h2>
+    <p style="margin:0" id="delText"></p>
+    <label>Type the lock's name to confirm<input id="delName" autocomplete="off" spellcheck="false"></label>
+    <div class="actions">
+      <button class="btn danger" type="button" id="delGo" disabled>Delete for good</button>
+      <button class="btn" type="button" id="delCancel">Cancel</button>
+    </div>
+  </section>
+
   <section id="pinnedSec" hidden style="display:flex;flex-direction:column;gap:12px">
     <h2>Pinned</h2>
     <div class="list" id="pinned"></div>
@@ -121,6 +131,7 @@ button.btn.danger{color:var(--warn)}
     <div class="row" id="notifyRow">
       <label>Notify me when it unlocks<select id="f-notify"><option value="always">Always</option><option value="quiet">Not during quiet hours</option><option value="off">Off</option></select><small id="notifyHint" style="font-weight:400;color:var(--muted)">Set up notifications further down the page first.</small></label>
     </div>
+    <label class="check" id="protectRow"><input type="checkbox" id="f-protect"><span>Protect from deletion<small>Deleting it will need its name typed in. Turn this off later with Edit.</small></span></label>
     <label class="check" id="pinRow"><input type="checkbox" id="f-pin"><span>Pin to top<small>Shows this lock at the top of the page, above New lock.</small></span></label>
 
     <div>
@@ -301,9 +312,9 @@ button.btn.danger{color:var(--warn)}
     <p>The number itself is never saved before it unlocks. Only the sealed version is. Unlocking needs an internet connection to fetch the published key.</p>
     <p>Limits: once a number is shown, you know it. Repeating locks rely on this page re-sealing the number during each window. If drand stopped running before your unlock time, the number could not be recovered, so keep a separate backup of anything you can't afford to lose.</p>
   </details>
-  <p class="net" style="text-align:center;margin:0">Version 16</p>
+  <p class="net" style="text-align:center;margin:0">Version 17</p>
 </div>
 <script src="vendor/tlock.js?v=0.9.0"></script>
-<script src="app.js?v=16"></script>
+<script src="app.js?v=17"></script>
 </body>
 </html>
