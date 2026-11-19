@@ -157,7 +157,7 @@ const when = ms => new Date(ms).toLocaleString(undefined, { weekday: 'short', mo
 function unitTxt(ms) { for (const [u, n] of [[604800000, 'week'], [86400000, 'day'], [3600000, 'hour'], [60000, 'minute']]) if (ms % u === 0) { const v = ms / u; return v + ' ' + n + (v === 1 ? '' : 's'); } return dur(ms); }
 function ruleTxt(L) {
   if (!repeating(L)) return 'Unlocks ' + when(L.unlockAt);
-  if (L.mode === 'cycle') return 'Locked ' + unitTxt(L.lockMs) + ', then visible ' + unitTxt(L.openMs) + ', repeating';
+  if (L.mode === 'cycle') return 'Locked ' + unitTxt(L.lockMs) + ', then visible ' + unitTxt(L.openMs) + ', repeating from ' + when(L.start);
   const ds = L.days.length === 7 ? 'Every day' : L.days.slice().sort().map(d => DAYN[d]).join(', ');
   return ds + ', ' + L.from + ' to ' + L.to;
 }
@@ -253,7 +253,28 @@ function setDefaultDate() { // today's date and the current time
   $('f-date').value = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
   $('f-time').value = p(d.getHours()) + ':' + p(d.getMinutes());
 }
+function setCycleStart(d) {
+  const p = n => String(n).padStart(2, '0');
+  $('f-cdate').value = d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  $('f-ctime').value = p(d.getHours()) + ':' + p(d.getMinutes());
+  cyclePreview();
+}
+function cycleStart() { const v = new Date($('f-cdate').value + 'T' + ($('f-ctime').value || '00:00')).getTime(); return v || null; }
+function cyclePreview() { // show the next few windows so the timing is easy to check
+  const s = cycleStart(), lock = +$('f-cl').value * +$('f-clunit').value, open = +$('f-co').value * +$('f-counit').value;
+  if (!s || !(lock > 0) || !(open > 0)) { $('cPreview').textContent = ''; return; }
+  const L = { mode: 'cycle', start: s, lockMs: lock, openMs: open }, out = [];
+  const tf = ms => new Date(ms).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' });
+  let w = nextWindowStart(L, now());
+  for (let i = 0; i < 3 && w; i++) { out.push(tf(w) + ' to ' + new Date(w + open).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })); w = nextWindowStart(L, w); }
+  $('cPreview').textContent = 'Next visible: ' + out.join(' · ');
+}
+$('cNow').addEventListener('click', () => setCycleStart(new Date()));
+$('cHour').addEventListener('click', () => { const d = new Date(); d.setMinutes(0, 0, 0); setCycleStart(d); });
+$('cNext').addEventListener('click', () => { const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1); setCycleStart(d); });
+['f-cdate', 'f-ctime', 'f-cl', 'f-clunit', 'f-co', 'f-counit'].forEach(id => $(id).addEventListener('input', cyclePreview));
 setDefaultDate();
+setCycleStart(new Date());
 
 $('form').addEventListener('submit', async e => {
   e.preventDefault();
@@ -270,7 +291,7 @@ $('form').addEventListener('submit', async e => {
   }
   if (mode === 'duration') { if (!(n('f-dur') > 0)) return fail('Enter how long to lock it.'); L.unlockAt = t + n('f-dur') * n('f-durunit'); }
   if (mode === 'schedule') { if (!days.length) return fail('Pick at least one day.'); if ($('f-from').value === $('f-to').value) return fail('Start and end times must differ.'); L.days = days.slice(); L.from = $('f-from').value; L.to = $('f-to').value; }
-  if (mode === 'cycle') { if (!(n('f-cl') > 0 && n('f-co') > 0)) return fail('Enter both cycle lengths.'); L.lockMs = n('f-cl') * n('f-clunit'); L.openMs = n('f-co') * n('f-counit'); L.start = t; }
+  if (mode === 'cycle') { if (!(n('f-cl') > 0 && n('f-co') > 0)) return fail('Enter both cycle lengths.'); L.lockMs = n('f-cl') * n('f-clunit'); L.openMs = n('f-co') * n('f-counit'); L.start = cycleStart(); if (!L.start) return fail('Pick when the cycle starts.'); }
   L.peekSec = $('o-peek').checked ? Math.max(1, n('o-peeksec') || 10) : 0;
   L.once = $('o-once').checked && repeating(L);
   L.pinned = $('f-pin').checked;
@@ -284,7 +305,7 @@ $('form').addEventListener('submit', async e => {
       if (repeating(L) || safeAt < L.unlockAt) L.safety = await seal(safeAt, num);
     }
     locks.unshift(L); save();
-    $('f-num').value = ''; $('f-label').value = ''; $('f-pin').checked = false; setDefaultDate();
+    $('f-num').value = ''; $('f-label').value = ''; $('f-pin').checked = false; setDefaultDate(); setCycleStart(new Date());
   } catch (ex) { fail('Sealing failed: ' + ex.message); }
   finally { btn.disabled = false; btn.textContent = 'Seal it'; render(); }
 });
