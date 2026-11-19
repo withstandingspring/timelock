@@ -258,7 +258,7 @@ function cardHTML(L) {
     if (visible && needsPeek) acts += `<button class="btn" data-act="unpeek" data-id="${L.id}">Cover now</button>`;
     if (!open && !repeating(L) && L.capsule && !busy[L.id]) acts += `<button class="btn" data-act="ext" data-ms="3600000" data-id="${L.id}">+1 hour</button><button class="btn" data-act="ext" data-ms="86400000" data-id="${L.id}">+1 day</button><button class="btn" data-act="ext" data-ms="604800000" data-id="${L.id}">+1 week</button>`;
     if (confirmDel === L.id) acts += `<span class="rule">Delete this lock? ${open ? '' : 'The number will be gone for good.'}</span><button class="btn danger" data-act="delgo" data-id="${L.id}">Delete</button><button class="btn" data-act="delno">Keep</button>`;
-    else acts += (ntfyTopic && !L.opened ? `<button class="btn" data-act="notify" data-id="${L.id}">Notify: ${!L.notify ? 'off' : L.notify === 'quiet' ? 'not during quiet hours' : 'always'}</button>` : '') + `<button class="btn" data-act="pin" data-id="${L.id}">${L.pinned ? 'Unpin' : 'Pin to top'}</button><button class="btn danger" data-act="del" data-id="${L.id}">Delete</button>`;
+    else acts += (ntfyTopic && !L.opened ? `<button class="btn" data-act="notify" data-id="${L.id}">Notify: ${!L.notify ? 'off' : L.notify === 'quiet' ? 'not during quiet hours' : 'always'}</button>` : '') + (L.mode === 'cycle' && !L.opened ? `<button class="btn" data-act="excl" data-id="${L.id}">Exclusions</button>` : '') + `<button class="btn" data-act="pin" data-id="${L.id}">${L.pinned ? 'Unpin' : 'Pin to top'}</button><button class="btn danger" data-act="del" data-id="${L.id}">Delete</button>`;
     const extra = [];
     if (L.safety) extra.push('safety unlock ' + when(L.safety.at));
     if (L.once && repeating(L)) extra.push('one reveal per window');
@@ -280,6 +280,7 @@ function onCardClick(e) {
   if (a === 'peek') { const m = mem[L.id]; peeks[L.id] = t + (L.peekSec ? L.peekSec * 1000 : 30000); if (m && L.once) { L.usedWin = m.win; touch(L); save(); } }
   if (a === 'unpeek') delete peeks[L.id];
   if (a === 'pin') { L.pinned = !L.pinned; touch(L); save(); }
+  if (a === 'excl') { openExEdit(L); return; }
   if (a === 'notify') { // cycles always -> not during quiet hours -> off
     setNotify(L, !L.notify ? 'always' : L.notify === 'quiet' ? 'off' : 'quiet');
     if (!L.notify) cancelBookings(L); touch(L); save(); if (L.notify) bookAll();
@@ -337,8 +338,10 @@ function cyclePreview() { // show the next few windows so the timing is easy to 
 let exRules = [];
 const dayList = days => days.length === 7 ? 'Every day' : days.slice().sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map(d => DAYN[d]).join(', ');
 const exclTxt = r => dayList(r.days) + ' ' + (r.allDay ? 'all day' : r.from + '–' + r.to + (toMin(r.to) <= toMin(r.from) ? ' (next morning)' : ''));
-function renderEx() {
-  $('exList').innerHTML = exRules.map((r, i) => `<div class="exRule">
+// One editor component, used by the New lock form and by "Exclusions" on an existing lock.
+function exEditor(listEl, addBtn, getRules, onChange) {
+  const draw = () => {
+    listEl.innerHTML = getRules().map((r, i) => `<div class="exRule">
     <div class="days">${[1, 2, 3, 4, 5, 6, 0].map(d => `<button type="button" class="day" data-ex="${i}" data-d="${d}" aria-pressed="${r.days.includes(d)}">${DAYN[d]}</button>`).join('')}</div>
     <div class="row">
       <label class="check" style="align-self:end"><input type="checkbox" data-exall="${i}" ${r.allDay ? 'checked' : ''}><span>All day</span></label>
@@ -347,24 +350,93 @@ function renderEx() {
     </div>
     <div><button type="button" class="btn danger" data-exdel="${i}">Remove</button></div>
   </div>`).join('');
-  cyclePreview();
+    onChange();
+  };
+  addBtn.addEventListener('click', () => { getRules().push({ days: [], allDay: false, from: '18:00', to: '10:00' }); draw(); });
+  listEl.addEventListener('click', e => {
+    const d = e.target.closest('[data-ex]'), del = e.target.closest('[data-exdel]'), rules = getRules();
+    if (d) { const r = rules[+d.dataset.ex], v = +d.dataset.d; r.days = r.days.includes(v) ? r.days.filter(x => x !== v) : [...r.days, v]; draw(); }
+    if (del) { rules.splice(+del.dataset.exdel, 1); draw(); }
+  });
+  listEl.addEventListener('change', e => { const t = e.target; if (t.dataset.exall != null) { getRules()[+t.dataset.exall].allDay = t.checked; draw(); } });
+  listEl.addEventListener('input', e => {
+    const t = e.target, rules = getRules();
+    if (t.dataset.exfrom != null) rules[+t.dataset.exfrom].from = t.value || '00:00';
+    if (t.dataset.exto != null) rules[+t.dataset.exto].to = t.value || '00:00';
+    onChange();
+  });
+  return draw;
 }
-$('exAdd').addEventListener('click', () => { exRules.push({ days: [], allDay: false, from: '18:00', to: '10:00' }); renderEx(); });
-$('exList').addEventListener('click', e => {
-  const d = e.target.closest('[data-ex]'), del = e.target.closest('[data-exdel]');
-  if (d) { const r = exRules[+d.dataset.ex], v = +d.dataset.d; r.days = r.days.includes(v) ? r.days.filter(x => x !== v) : [...r.days, v]; renderEx(); }
-  if (del) { exRules.splice(+del.dataset.exdel, 1); renderEx(); }
+function exProblem(rules) {
+  if (rules.some(r => !r.days.length)) return 'Pick at least one day for each exclusion, or remove it.';
+  if (rules.some(r => !r.allDay && r.from === r.to)) return "An exclusion's start and end times must differ. Tick All day for a whole day.";
+  return null;
+}
+const renderEx = exEditor($('exList'), $('exAdd'), () => exRules, () => cyclePreview());
+
+/* editing exclusions on an existing repeating cycle */
+let editId = null, editRules = [];
+const editLock = () => locks.find(l => l.id === editId && !l.deleted);
+const fmtWin = ms => new Date(ms).toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+function cycleWindowStartAt(L, at) { // start of the cycle window a sealed time belongs to
+  const P = L.lockMs + L.openMs; return L.start + Math.floor((at - L.start - L.lockMs + 5000) / P) * P + L.lockMs;
+}
+function editPreview() {
+  const L = editLock(); if (!L) return;
+  const Ln = Object.assign({}, L, { excl: editRules.length ? { tz: LOCAL_TZ, rules: editRules } : null });
+  const p = exProblem(editRules); if (p) { $('exEditPreview').textContent = ''; return; }
+  const out = []; let w = nextWindowStart(Ln, now());
+  for (let i = 0; i < 3 && w; i++) { out.push(new Date(w).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' })); w = nextWindowStart(Ln, w); }
+  $('exEditPreview').textContent = out.length ? 'With these rules, next visible: ' + out.join(' · ') : 'With these exclusions it would never be visible.';
+}
+const drawEdit = exEditor($('exEditList'), $('exEditAdd'), () => editRules, editPreview);
+function openExEdit(L) {
+  editId = L.id; editRules = JSON.parse(JSON.stringify((L.excl && L.excl.rules) || []));
+  $('exEditTitle').textContent = 'Exclusions for "' + L.label + '"'; $('exEditErr').hidden = true;
+  $('exEdit').hidden = false; drawEdit(); $('exEdit').scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+function closeExEdit() { editId = null; $('exEdit').hidden = true; }
+$('exEditCancel').addEventListener('click', closeExEdit);
+$('exEditSave').addEventListener('click', async () => {
+  const L = editLock(), err = $('exEditErr'), btn = $('exEditSave');
+  const fail = m => { err.textContent = m; err.hidden = false; };
+  if (!L) return closeExEdit();
+  if (exProblem(editRules)) return fail(exProblem(editRules));
+  const excl = editRules.length ? { tz: LOCAL_TZ, rules: JSON.parse(JSON.stringify(editRules)) } : null;
+  const Ln = Object.assign({}, L, { excl }), t = now();
+  if (!nextWindowStart(Ln, t)) return fail('With these exclusions the number would never be visible.');
+  if (busy[L.id]) return fail('This lock is busy unlocking. Try again in a moment.');
+  busy[L.id] = true; btn.disabled = true; btn.textContent = 'Saving…';
+  let note = '';
+  try {
+    if (mem[L.id]) { // window open here, so the number is known: re-seal properly under the new rules
+      L.excl = excl;
+      const w = currentWindow(L, t), next = nextWindowStart(L, w ? w.end - 1 : t);
+      L.capsule = await seal(next, mem[L.id].num);
+      if (!w) delete mem[L.id];
+      note = 'Next visible ' + fmtWin(L.capsule.at) + '.';
+    } else if (L.capsule) {
+      const ws = cycleWindowStartAt(L, L.capsule.at);
+      if (windowExcluded(Ln, ws, ws + L.openMs)) { // sealed window is now excluded: wrap the seal to the next allowed one
+        const target = nextWindowStart(Ln, ws), r = engine.roundFor(target);
+        L.capsule = { round: r, at: engine.timeOf(r), ct: await engine.encrypt(r, L.capsule.ct) };
+        note = 'The next window was excluded, so the seal moved to ' + fmtWin(L.capsule.at) + '.';
+      } else {
+        note = 'Next visible ' + fmtWin(L.capsule.at) + '.';
+        const earliest = nextWindowStart(Ln, t);
+        if (earliest && earliest < ws) note += ' Removed exclusions take effect after that unlock.';
+      }
+      L.excl = excl;
+    } else L.excl = excl;
+    touch(L); save(); bookAll(); closeExEdit();
+    toast('Exclusions saved. ' + note);
+  } catch (e) { fail('Saving failed: ' + e.message); }
+  finally { delete busy[L.id]; btn.disabled = false; btn.textContent = 'Save exclusions'; render(); }
 });
-$('exList').addEventListener('change', e => {
-  const t = e.target;
-  if (t.dataset.exall != null) { exRules[+t.dataset.exall].allDay = t.checked; renderEx(); }
-});
-$('exList').addEventListener('input', e => {
-  const t = e.target;
-  if (t.dataset.exfrom != null) exRules[+t.dataset.exfrom].from = t.value || '00:00';
-  if (t.dataset.exto != null) exRules[+t.dataset.exto].to = t.value || '00:00';
-  cyclePreview();
-});
+function toast(msg) {
+  const el = $('toast');
+  el.textContent = msg; el.hidden = false; clearTimeout(toast.t); toast.t = setTimeout(() => { el.hidden = true; }, 12000);
+}
 $('cNow').addEventListener('click', () => setCycleStart(new Date()));
 $('cHour').addEventListener('click', () => { const d = new Date(); d.setMinutes(0, 0, 0); setCycleStart(d); });
 $('cNext').addEventListener('click', () => { const d = new Date(); d.setMinutes(0, 0, 0); d.setHours(d.getHours() + 1); setCycleStart(d); });
@@ -388,8 +460,7 @@ $('form').addEventListener('submit', async e => {
   if (mode === 'duration') { if (!(n('f-dur') > 0)) return fail('Enter how long to lock it.'); L.unlockAt = t + n('f-dur') * n('f-durunit'); }
   if (mode === 'schedule') { if (!days.length) return fail('Pick at least one day.'); if ($('f-from').value === $('f-to').value) return fail('Start and end times must differ.'); L.days = days.slice(); L.from = $('f-from').value; L.to = $('f-to').value; }
   if (mode === 'cycle') { if (!(n('f-cl') > 0 && n('f-co') > 0)) return fail('Enter both cycle lengths.'); L.lockMs = n('f-cl') * n('f-clunit'); L.openMs = n('f-co') * n('f-counit'); L.start = cycleStart(); if (!L.start) return fail('Pick when the cycle starts.');
-    if (exRules.some(r => !r.days.length)) return fail('Pick at least one day for each exclusion, or remove it.');
-    if (exRules.some(r => !r.allDay && r.from === r.to)) return fail('An exclusion\'s start and end times must differ. Tick All day for a whole day.');
+    if (exProblem(exRules)) return fail(exProblem(exRules));
     if (exRules.length) L.excl = { tz: LOCAL_TZ, rules: JSON.parse(JSON.stringify(exRules)) };
     if (!nextWindowStart(L, t)) return fail('With these exclusions the number would never be visible.');
   }

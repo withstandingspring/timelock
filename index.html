@@ -90,6 +90,21 @@ button.btn.danger{color:var(--warn)}
 
   <div id="clockAlert" class="alert" hidden></div>
 
+  <section class="panel" id="exEdit" hidden>
+    <h2 id="exEditTitle">Exclusions</h2>
+    <p class="note">Adding an exclusion works straight away: if the next sealed window falls in it, the seal moves to the next allowed window. Removing one takes effect after the next unlock, because a seal can't be made to open earlier.</p>
+    <div id="exEditList" style="display:flex;flex-direction:column;gap:12px"></div>
+    <div><button class="btn" type="button" id="exEditAdd">Add exclusion</button></div>
+    <p class="note" id="exEditPreview"></p>
+    <p class="err" id="exEditErr" hidden></p>
+    <div class="actions">
+      <button class="primary" type="button" id="exEditSave">Save exclusions</button>
+      <button class="btn" type="button" id="exEditCancel">Cancel</button>
+    </div>
+  </section>
+
+  <p class="ok" id="toast" role="status" hidden></p>
+
   <section id="pinnedSec" hidden style="display:flex;flex-direction:column;gap:12px">
     <h2>Pinned</h2>
     <div class="list" id="pinned"></div>
@@ -286,9 +301,9 @@ button.btn.danger{color:var(--warn)}
     <p>The number itself is never saved before it unlocks. Only the sealed version is. Unlocking needs an internet connection to fetch the published key.</p>
     <p>Limits: once a number is shown, you know it. Repeating locks rely on this page re-sealing the number during each window. If drand stopped running before your unlock time, the number could not be recovered, so keep a separate backup of anything you can't afford to lose.</p>
   </details>
-  <p class="net" style="text-align:center;margin:0">Version 12</p>
+  <p class="net" style="text-align:center;margin:0">Version 13</p>
 </div>
 <script src="vendor/tlock.js?v=0.9.0"></script>
-<script src="app.js?v=12"></script>
+<script src="app.js?v=13"></script>
 </body>
 </html>
