@@ -18,8 +18,9 @@ one reveal per window (repeating modes).
 ## How it works
 
 - Sealing happens in the browser and works offline. The drand chain info is built in.
-- Only the sealed text is stored (in `localStorage`). The plain number is stored only once a one-time
-  lock has unlocked.
+- Only sealed text is stored and synced. Once a lock unlocks, its number is kept on that device only
+  (in `localStorage`); the synced copy stays sealed to a round that has already been published, so other
+  devices open it from drand themselves. The sync repository and backups never hold a readable number.
 - Adding time wraps the existing seal in another seal for the later time.
 - Repeating locks: when a window opens, the page unseals the number, re-seals it for the next window,
   then shows it. The plain number stays in memory only.
@@ -49,7 +50,7 @@ repository books upcoming notifications every 12 hours, so long locks are covere
   page open, the old seal stays decryptable by technical means until the page is opened again.
 - Unlocking needs an internet connection to fetch the published drand key.
 - If drand stopped operating before the unlock time, the number couldn't be recovered.
-- Without sync, locks live in one browser. Use sync or the Backup section to move them. Sealed locks stay sealed in
+- Without sync, locks live in one browser. Use sync or the Backup section to move them. Every lock stays sealed in
   a backup, but a backup of a repeating lock becomes decryptable once the window it was sealed for
   has passed.
 

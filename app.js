@@ -106,9 +106,37 @@ async function seal(t, num) {
   return { round, at: engine.timeOf(round), ct: await engine.encrypt(round, JSON.stringify({ n: num })) };
 }
 
+/* Unlocked numbers live only on this device. The synced lock keeps a sealed copy for an
+   already-published round, so other devices open it from drand themselves. */
+const PLAIN_KEY = 'timelock.plain';
+let plain = {};
+try { plain = JSON.parse(localStorage.getItem(PLAIN_KEY) || '{}') || {}; } catch (e) {}
+function savePlain() { try { localStorage.setItem(PLAIN_KEY, JSON.stringify(plain)); } catch (e) {} }
+let migrating = false;
+async function migrate() { // move numbers saved by older versions out of the synced data
+  if (migrating) return; migrating = true;
+  try {
+    for (const L of locks) {
+      if (!L.opened || L.opened.num == null) continue;
+      const n = L.opened.num;
+      plain[L.id] = n; savePlain();
+      if (!L.opened.ct) L.opened.ct = (await seal(Math.min(L.opened.at || now(), now()), n)).ct;
+      delete L.opened.num; touch(L); save();
+    }
+  } catch (e) { /* retried on the next sync */ } finally { migrating = false; }
+}
+
 async function process(L) {
-  if (busy[L.id] || L.opened) return;
+  if (busy[L.id] || L.deleted) return;
   if (errs[L.id] && now() < errs[L.id].retryAt) return;
+  if (L.opened) { // unlocked elsewhere or restored: fetch the key to show it here
+    if (plain[L.id] != null || !L.opened.ct) return;
+    busy[L.id] = true; render();
+    try { plain[L.id] = await openCapsule(L.opened.ct); savePlain(); delete errs[L.id]; }
+    catch (e) { errs[L.id] = { msg: "Unlocked, but couldn't reach drand to show it on this device. Retrying shortly.", retryAt: now() + 15000 }; }
+    finally { delete busy[L.id]; render(); }
+    return;
+  }
   const t = now();
   const safeDue = L.safety && t >= L.safety.at;
   const mainDue = L.capsule && t >= L.capsule.at;
@@ -117,10 +145,12 @@ async function process(L) {
   try {
     if (safeDue) {
       const n = await openCapsule(L.safety.ct);
-      L.opened = { num: n, how: 'safety', at: now() }; L.capsule = null; L.safety = null; delete mem[L.id];
+      plain[L.id] = n; savePlain();
+      L.opened = { how: 'safety', at: now(), ct: L.safety.ct }; L.capsule = null; L.safety = null; delete mem[L.id];
     } else if (!repeating(L)) {
       const n = await openCapsule(L.capsule.ct);
-      L.opened = { num: n, how: 'time', at: now() }; L.capsule = null; L.safety = null;
+      plain[L.id] = n; savePlain();
+      L.opened = { how: 'time', at: now(), ct: L.capsule.ct }; L.capsule = null; L.safety = null;
     } else {
       const n = await openCapsule(L.capsule.ct);
       const t2 = now(), w = currentWindow(L, t2);
@@ -178,7 +208,7 @@ function cardHTML(L) {
   {
     const m = mem[L.id] && mem[L.id].until > t ? mem[L.id] : null;
     if (mem[L.id] && !m) delete mem[L.id];
-    const num = L.opened ? L.opened.num : m ? m.num : null;
+    const num = L.opened ? (plain[L.id] != null ? plain[L.id] : L.opened.num != null ? L.opened.num : null) : m ? m.num : null;
     const open = num !== null;
     const usedUp = m && L.once && L.usedWin === m.win && !(peeks[L.id] > t);
     const needsPeek = open && (L.peekSec || (m && L.once));
@@ -229,7 +259,7 @@ function onCardClick(e) {
     cancelBookings(L);
     const rev = (L.rev || 0) + 1, id = L.id;
     Object.keys(L).forEach(k => delete L[k]); Object.assign(L, { id, deleted: true, rev, updated: Date.now() });
-    delete mem[id]; confirmDel = null; save();
+    delete mem[id]; delete plain[id]; savePlain(); confirmDel = null; save();
   }
   render();
 }
@@ -353,7 +383,7 @@ function merge(remote) {
     const l = byId.get(r.id);
     if (!l) { locks.push(r); if (!r.deleted) added++; changed = true; continue; }
     const c = newer(r, l);
-    if (c > 0) { Object.keys(l).forEach(k => delete l[k]); Object.assign(l, r); changed = true; if (r.deleted) delete mem[r.id]; }
+    if (c > 0) { Object.keys(l).forEach(k => delete l[k]); Object.assign(l, r); changed = true; if (r.deleted) { delete mem[r.id]; if (plain[r.id] != null) { delete plain[r.id]; savePlain(); } } }
     else if (c < 0) needPush = true;
   }
   if (locks.some(l => !seen.has(l.id))) needPush = true;
@@ -402,7 +432,7 @@ async function syncNow() {
   try {
     for (let i = 0; i < 4; i++) {
       const res = merge(await pull());
-      if (res.changed) { saveLocal(); render(); }
+      if (res.changed) { saveLocal(); render(); migrate(); }
       if (!res.needPush || await push()) break;
     }
     syncState = { ok: true, msg: '', at: Date.now() };
@@ -434,7 +464,7 @@ async function connect(repo, token) {
     const r = await gh('GET', '', null, { repo, token });
     if (!r.ok) { msg.className = 'err'; msg.textContent = ghError(r.status); return false; }
     const info = await r.json();
-    if (!info.private) { msg.className = 'err'; msg.textContent = 'That repository is public. Unlocked numbers would be visible to anyone, so use a private repository.'; return false; }
+    if (!info.private) { msg.className = 'err'; msg.textContent = 'That repository is public. Use a private one so your lock names and times stay private.'; return false; }
   } catch (e) { msg.className = 'err'; msg.textContent = "Can't reach GitHub. Check your connection."; return false; }
   sync = { repo, token }; sha = null;
   try { localStorage.setItem(SYNC_KEY, JSON.stringify(sync)); } catch (e) {}
@@ -566,6 +596,7 @@ async function checkNet() {
 /* ---------- start ---------- */
 locks = load();
 render();
+migrate();
 checkNet();
 setInterval(() => { locks.forEach(L => { process(L); }); render(); }, 1000);
 setInterval(checkNet, 5 * 60000);

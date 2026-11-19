@@ -203,7 +203,7 @@ button.btn.danger{color:var(--warn)}
     <h2>Sync between devices</h2>
     <div id="syncOff">
       <form id="syncForm" autocomplete="off" style="display:flex;flex-direction:column;gap:12px">
-        <p class="note">Keeps your locks the same on every device by saving them in a private GitHub repository. Sealed locks stay sealed there.</p>
+        <p class="note">Keeps your locks the same on every device by saving them in a private GitHub repository. Only sealed copies are saved there, never a readable number.</p>
         <details>
           <summary>How to set it up (one time)</summary>
           <ol style="margin:10px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:.9rem;color:var(--muted)">
@@ -243,7 +243,7 @@ button.btn.danger{color:var(--warn)}
 
   <section class="panel">
     <h2>Backup</h2>
-    <p class="note">Locks are saved in this browser. A backup lets you restore them after clearing browser data, or move them to another device. Sealed locks stay sealed in the backup. Locks that are already unlocked include their number in plain text.</p>
+    <p class="note">Locks are saved in this browser. A backup lets you restore them after clearing browser data, or move them to another device. Every lock stays sealed in the backup. Restoring an unlocked lock needs an internet connection once to show its number again.</p>
     <div class="actions">
       <button class="btn" type="button" id="exp">Create backup</button>
       <button class="btn" type="button" id="copy" hidden>Copy</button>
@@ -264,9 +264,9 @@ button.btn.danger{color:var(--warn)}
     <p>The number itself is never saved before it unlocks. Only the sealed version is. Unlocking needs an internet connection to fetch the published key.</p>
     <p>Limits: once a number is shown, you know it. Repeating locks rely on this page re-sealing the number during each window. If drand stopped running before your unlock time, the number could not be recovered, so keep a separate backup of anything you can't afford to lose.</p>
   </details>
-  <p class="net" style="text-align:center;margin:0">Version 9</p>
+  <p class="net" style="text-align:center;margin:0">Version 10</p>
 </div>
 <script src="vendor/tlock.js?v=0.9.0"></script>
-<script src="app.js?v=9"></script>
+<script src="app.js?v=10"></script>
 </body>
 </html>
