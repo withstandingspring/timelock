@@ -101,6 +101,7 @@ button.btn.danger{color:var(--warn)}
       <label>Number or code<input id="f-num" type="text" inputmode="numeric" placeholder="e.g. 4821" spellcheck="false"></label>
     </div>
 
+    <label class="check" id="notifyRow"><input type="checkbox" id="f-notify"><span>Notify me when it unlocks<small id="notifyHint">Set up notifications further down the page first.</small></span></label>
     <label class="check"><input type="checkbox" id="f-pin"><span>Pin to top<small>Shows this lock at the top of the page, above New lock.</small></span></label>
 
     <div>
@@ -175,6 +176,29 @@ button.btn.danger{color:var(--warn)}
     <div class="list" id="list"></div>
   </section>
 
+  <section class="panel" id="notifyPanel">
+    <h2>Unlock notifications</h2>
+    <p class="note">Sends a push notification through the free ntfy app when a lock unlocks, even with this page closed. The notification shows the lock's name, never its number.</p>
+    <details>
+      <summary>How to set it up (one time per phone)</summary>
+      <ol style="margin:10px 0 0;padding-left:20px;display:flex;flex-direction:column;gap:6px;font-size:.9rem;color:var(--muted)">
+        <li>Install the <strong>ntfy</strong> app.</li>
+        <li>Make up a private channel name that nobody would guess, like <code>tl-</code> plus 10 random letters and numbers. Anyone who knows it can see your lock names.</li>
+        <li>In ntfy, tap + and subscribe to that name on the default server, ntfy.sh.</li>
+        <li>Enter the same name below and tap Save, then Send test.</li>
+      </ol>
+    </details>
+    <div class="row">
+      <label>ntfy channel name<input id="n-topic" placeholder="tl-…" spellcheck="false" autocapitalize="off" autocomplete="off"></label>
+    </div>
+    <div class="actions">
+      <button class="btn" type="button" id="n-save">Save</button>
+      <button class="btn" type="button" id="n-test">Send test</button>
+      <button class="btn danger" type="button" id="n-clear" hidden>Turn off</button>
+    </div>
+    <p id="n-msg" class="net" hidden></p>
+  </section>
+
   <section class="panel" id="syncPanel">
     <h2>Sync between devices</h2>
     <div id="syncOff">
@@ -240,9 +264,9 @@ button.btn.danger{color:var(--warn)}
     <p>The number itself is never saved before it unlocks. Only the sealed version is. Unlocking needs an internet connection to fetch the published key.</p>
     <p>Limits: once a number is shown, you know it. Repeating locks rely on this page re-sealing the number during each window. If drand stopped running before your unlock time, the number could not be recovered, so keep a separate backup of anything you can't afford to lose.</p>
   </details>
-  <p class="net" style="text-align:center;margin:0">Version 7</p>
+  <p class="net" style="text-align:center;margin:0">Version 8</p>
 </div>
 <script src="vendor/tlock.js?v=0.9.0"></script>
-<script src="app.js?v=7"></script>
+<script src="app.js?v=8"></script>
 </body>
 </html>

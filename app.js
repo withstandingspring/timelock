@@ -144,7 +144,7 @@ async function extend(L, ms) {
     L.capsule = { round: r, at: engine.timeOf(r), ct: await engine.encrypt(r, L.capsule.ct) };
     L.unlockAt += ms;
     if (L.safety) { const s = engine.roundFor(L.safety.at + ms); L.safety = { round: s, at: engine.timeOf(s), ct: await engine.encrypt(s, L.safety.ct) }; }
-    touch(L); save();
+    touch(L); save(); bookAll();
   } finally { delete busy[L.id]; render(); }
 }
 
@@ -225,6 +225,7 @@ function onCardClick(e) {
   if (a === 'del') confirmDel = L.id;
   if (a === 'delno') confirmDel = null;
   if (a === 'delgo') { // keep a deletion marker so other devices delete it too
+    cancelBookings(L);
     const rev = (L.rev || 0) + 1, id = L.id;
     Object.keys(L).forEach(k => delete L[k]); Object.assign(L, { id, deleted: true, rev, updated: Date.now() });
     delete mem[id]; confirmDel = null; save();
@@ -295,6 +296,7 @@ $('form').addEventListener('submit', async e => {
   L.peekSec = $('o-peek').checked ? Math.max(1, n('o-peeksec') || 10) : 0;
   L.once = $('o-once').checked && repeating(L);
   L.pinned = $('f-pin').checked;
+  L.notify = !!ntfyTopic && $('f-notify').checked;
   const first = repeating(L) ? nextWindowStart(L, t) : L.unlockAt;
   if (!first) return fail('That schedule has no upcoming window.');
   const btn = $('submit'); btn.disabled = true; btn.textContent = 'Sealing…';
@@ -304,7 +306,7 @@ $('form').addEventListener('submit', async e => {
       const safeAt = t + (Math.max(1, n('o-safen')) || 7) * n('o-safeunit');
       if (repeating(L) || safeAt < L.unlockAt) L.safety = await seal(safeAt, num);
     }
-    locks.unshift(L); save();
+    locks.unshift(L); save(); bookAll();
     $('f-num').value = ''; $('f-label').value = ''; $('f-pin').checked = false; setDefaultDate(); setCycleStart(new Date());
   } catch (ex) { fail('Sealing failed: ' + ex.message); }
   finally { btn.disabled = false; btn.textContent = 'Seal it'; render(); }
@@ -448,7 +450,7 @@ $('syncDisc').addEventListener('click', () => {
   $('syncConfirm').hidden = true; $('linkBox').hidden = true; renderSync();
 });
 $('syncLink').addEventListener('click', async () => {
-  const link = location.origin + location.pathname + '#sync=' + b64enc(JSON.stringify(sync));
+  const link = location.origin + location.pathname + '#sync=' + b64enc(JSON.stringify(Object.assign({}, sync, ntfyTopic ? { ntfy: ntfyTopic } : {})));
   const box = $('linkBox'); box.hidden = false; $('linkText').value = link;
   try { await navigator.clipboard.writeText(link); $('linkHint').textContent = 'Copied. Open it on your other device. It contains your access key, so only send it to yourself.'; }
   catch (e) { $('linkText').select(); $('linkHint').textContent = 'Copy this link and open it on your other device. It contains your access key, so only send it to yourself.'; }
@@ -456,10 +458,98 @@ $('syncLink').addEventListener('click', async () => {
 function setupFromLink() {
   const m = location.hash.match(/^#sync=(.+)$/); if (!m) return;
   history.replaceState(null, '', location.pathname + location.search);
-  try { const cfg = JSON.parse(b64dec(decodeURIComponent(m[1]))); if (cfg.repo && cfg.token) connect(cfg.repo, cfg.token); } catch (e) {}
+  try { const cfg = JSON.parse(b64dec(decodeURIComponent(m[1]))); if (cfg.ntfy) setTopic(cfg.ntfy); if (cfg.repo && cfg.token) connect(cfg.repo, cfg.token); } catch (e) {}
 }
 setupFromLink();
 window.addEventListener('hashchange', setupFromLink);
+
+/* ---------- unlock notifications through ntfy ---------- */
+const NTFY = 'https://ntfy.sh', NTFY_KEY = 'timelock.ntfy', MAX_AHEAD = 3 * 86400000 - 10 * 60000;
+let ntfyTopic = null;
+try { ntfyTopic = localStorage.getItem(NTFY_KEY) || null; } catch (e) {}
+const validTopic = s => /^[A-Za-z0-9_-]{1,64}$/.test(s);
+const hm = ms => new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+function setTopic(t) {
+  ntfyTopic = t || null;
+  try { if (ntfyTopic) localStorage.setItem(NTFY_KEY, ntfyTopic); else localStorage.removeItem(NTFY_KEY); } catch (e) {}
+  renderNotify();
+}
+function renderNotify() {
+  $('n-topic').value = ntfyTopic || $('n-topic').value;
+  $('n-clear').hidden = !ntfyTopic; $('n-test').disabled = !ntfyTopic;
+  $('f-notify').disabled = !ntfyTopic;
+  if (ntfyTopic && !$('f-notify').dataset.touched) $('f-notify').checked = true;
+  if (!ntfyTopic) $('f-notify').checked = false;
+  $('notifyHint').textContent = ntfyTopic ? 'Sends a push notification through ntfy at the unlock time.' : 'Set up notifications further down the page first.';
+}
+function nMsg(text, cls) { const m = $('n-msg'); m.hidden = false; m.className = cls || 'net'; m.textContent = text; }
+async function ntfySend(seq, at, title, body) {
+  const headers = { Title: title, Tags: 'unlock', Priority: '4', Click: location.origin + location.pathname };
+  if (at) headers.At = String(Math.floor(at / 1000));
+  const r = await fetch(NTFY + '/' + ntfyTopic + (seq ? '/' + seq : ''), { method: 'POST', headers, body });
+  if (!r.ok) throw new Error(r.status === 429 ? 'ntfy says too many messages today. Try again later.' : 'ntfy returned an error (' + r.status + ').');
+}
+// The times a lock should notify at, within ntfy's 3-day booking limit. Each gets a fixed ID so re-booking replaces it.
+function targets(L, t) {
+  if (L.deleted || L.opened || !L.notify) return [];
+  const out = [], label = L.label;
+  if (!repeating(L)) {
+    const at = Math.min(L.capsule ? L.capsule.at : Infinity, L.safety ? L.safety.at : Infinity);
+    if (at < Infinity) out.push({ seq: 'tl' + L.id, at, body: '"' + label + '" is unlocking now.' });
+  } else {
+    let w = nextWindowStart(L, t);
+    const horizon = t + (L.mode === 'cycle' ? 26 * 3600000 : MAX_AHEAD);
+    for (let i = 0; i < 40 && w && w <= horizon; i++) {
+      const end = L.mode === 'cycle' ? w + L.openMs : (schedIntervals(L, w).find(x => x[0] === w) || [w, w])[1];
+      out.push({ seq: 'tl' + L.id + '-' + Math.floor(w / 1000), at: w, body: '"' + label + '" is visible now until ' + hm(end) + '.' });
+      w = nextWindowStart(L, w);
+    }
+    if (L.safety) out.push({ seq: 'tl' + L.id + '-safe', at: L.safety.at, body: '"' + label + '" is unlocking for good (safety unlock).' });
+  }
+  return out.filter(x => x.at - t > 15000 && x.at - t <= MAX_AHEAD);
+}
+let booking = false;
+async function bookAll() {
+  if (!ntfyTopic || booking) return;
+  booking = true;
+  try {
+    const t = now();
+    for (const L of locks) {
+      if (L.opened && L.booked) cancelBookings(L, t); // opened early (safety): drop the rest
+      L.booked = L.booked || {};
+      let changed = false;
+      for (const k of Object.keys(L.booked)) if (L.booked[k] < t - 3600000) { delete L.booked[k]; changed = true; }
+      for (const x of targets(L, t)) {
+        if (L.booked[x.seq] === x.at) continue;
+        try { await ntfySend(x.seq, x.at, 'Time Lock', x.body); L.booked[x.seq] = x.at; touch(L); saveLocal(); changed = true; }
+        catch (e) { nMsg(e instanceof TypeError ? "Can't reach ntfy right now. Notifications will be booked when you're back online." : e.message, 'err'); break; }
+      }
+      if (!Object.keys(L.booked).length) delete L.booked;
+      if (changed) { touch(L); save(); }
+    }
+  } finally { booking = false; }
+}
+function cancelBookings(L, after) {
+  if (!ntfyTopic || !L.booked) return;
+  for (const [seq, at] of Object.entries(L.booked)) {
+    if (after && at <= after) continue;
+    fetch(NTFY + '/' + ntfyTopic + '/' + seq, { method: 'DELETE' }).catch(() => {});
+  }
+  L.booked = {};
+}
+$('n-save').addEventListener('click', () => {
+  const v = $('n-topic').value.trim();
+  if (!validTopic(v)) return nMsg('Use only letters, numbers, - and _, up to 64 characters.', 'err');
+  if (v.length < 10) return nMsg('Use at least 10 characters so nobody can guess it.', 'err');
+  setTopic(v); nMsg('Saved. Tap Send test to check your phone gets it.', 'ok'); bookAll();
+});
+$('n-test').addEventListener('click', async () => {
+  try { await ntfySend(null, 0, 'Time Lock', 'Test notification. Unlock notifications are working.'); nMsg('Sent. It should arrive on your phone within a few seconds.', 'ok'); }
+  catch (e) { nMsg(e instanceof TypeError ? "Couldn't reach ntfy. Check your connection." : e.message, 'err'); }
+});
+$('n-clear').addEventListener('click', () => { setTopic(null); $('n-topic').value = ''; nMsg('Notifications are off on this device.', 'net'); });
+$('f-notify').addEventListener('change', () => { $('f-notify').dataset.touched = '1'; });
+renderNotify();
 
 /* ---------- network clock check ---------- */
 async function checkNet() {
@@ -478,7 +568,7 @@ render();
 checkNet();
 setInterval(() => { locks.forEach(L => { process(L); }); render(); }, 1000);
 setInterval(checkNet, 5 * 60000);
-syncNow();
-setInterval(() => { if (!document.hidden) syncNow(); }, 60000);
+syncNow().then(bookAll);
+setInterval(() => { if (!document.hidden) syncNow().then(bookAll); }, 60000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { syncNow(); locks.forEach(L => { process(L); }); render(); } });
 })();
