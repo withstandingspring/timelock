@@ -40,6 +40,10 @@ ntfy phone app. Locks book a notification for their unlock time (repeating locks
 windows ahead) whenever the app is open. Each booking uses a fixed sequence ID, so adding time replaces it,
 deleting a lock cancels it, and two devices can't double-book. Messages contain the lock name, never the number.
 
+Each lock can notify always, not during quiet hours, or not at all. Quiet hours (default 22:00 to 07:00,
+in the phone's time zone) can skip the notification, send it silently, or hold a one-time unlock's
+notification until they end. The rule is saved with each lock so other devices and the GitHub job follow it.
+
 ntfy only accepts bookings up to 3 days ahead. A scheduled GitHub Actions job in the private data
 repository books upcoming notifications every 12 hours, so long locks are covered even if the app isn't opened.
 

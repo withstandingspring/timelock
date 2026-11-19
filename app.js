@@ -229,7 +229,7 @@ function cardHTML(L) {
     if (visible && needsPeek) acts += `<button class="btn" data-act="unpeek" data-id="${L.id}">Cover now</button>`;
     if (!open && !repeating(L) && L.capsule && !busy[L.id]) acts += `<button class="btn" data-act="ext" data-ms="3600000" data-id="${L.id}">+1 hour</button><button class="btn" data-act="ext" data-ms="86400000" data-id="${L.id}">+1 day</button><button class="btn" data-act="ext" data-ms="604800000" data-id="${L.id}">+1 week</button>`;
     if (confirmDel === L.id) acts += `<span class="rule">Delete this lock? ${open ? '' : 'The number will be gone for good.'}</span><button class="btn danger" data-act="delgo" data-id="${L.id}">Delete</button><button class="btn" data-act="delno">Keep</button>`;
-    else acts += (ntfyTopic && !L.opened ? `<button class="btn" data-act="notify" data-id="${L.id}">${L.notify ? 'Notify: on' : 'Notify: off'}</button>` : '') + `<button class="btn" data-act="pin" data-id="${L.id}">${L.pinned ? 'Unpin' : 'Pin to top'}</button><button class="btn danger" data-act="del" data-id="${L.id}">Delete</button>`;
+    else acts += (ntfyTopic && !L.opened ? `<button class="btn" data-act="notify" data-id="${L.id}">Notify: ${!L.notify ? 'off' : L.notify === 'quiet' ? 'not during quiet hours' : 'always'}</button>` : '') + `<button class="btn" data-act="pin" data-id="${L.id}">${L.pinned ? 'Unpin' : 'Pin to top'}</button><button class="btn danger" data-act="del" data-id="${L.id}">Delete</button>`;
     const extra = [];
     if (L.safety) extra.push('safety unlock ' + when(L.safety.at));
     if (L.once && repeating(L)) extra.push('one reveal per window');
@@ -251,7 +251,10 @@ function onCardClick(e) {
   if (a === 'peek') { const m = mem[L.id]; peeks[L.id] = t + (L.peekSec ? L.peekSec * 1000 : 30000); if (m && L.once) { L.usedWin = m.win; touch(L); save(); } }
   if (a === 'unpeek') delete peeks[L.id];
   if (a === 'pin') { L.pinned = !L.pinned; touch(L); save(); }
-  if (a === 'notify') { L.notify = !L.notify; if (!L.notify) cancelBookings(L); touch(L); save(); if (L.notify) bookAll(); }
+  if (a === 'notify') { // cycles always -> not during quiet hours -> off
+    setNotify(L, !L.notify ? 'always' : L.notify === 'quiet' ? 'off' : 'quiet');
+    if (!L.notify) cancelBookings(L); touch(L); save(); if (L.notify) bookAll();
+  }
   if (a === 'ext') { extend(L, +b.dataset.ms); return; }
   if (a === 'del') confirmDel = L.id;
   if (a === 'delno') confirmDel = null;
@@ -327,7 +330,7 @@ $('form').addEventListener('submit', async e => {
   L.peekSec = $('o-peek').checked ? Math.max(1, n('o-peeksec') || 10) : 0;
   L.once = $('o-once').checked && repeating(L);
   L.pinned = $('f-pin').checked;
-  L.notify = !!ntfyTopic && $('f-notify').checked;
+  setNotify(L, ntfyTopic ? $('f-notify').value : 'off');
   const first = repeating(L) ? nextWindowStart(L, t) : L.unlockAt;
   if (!first) return fail('That schedule has no upcoming window.');
   const btn = $('submit'); btn.disabled = true; btn.textContent = 'Sealing…';
@@ -509,13 +512,52 @@ function renderNotify() {
   $('n-topic').value = ntfyTopic || $('n-topic').value;
   $('n-clear').hidden = !ntfyTopic; $('n-test').disabled = !ntfyTopic;
   $('f-notify').disabled = !ntfyTopic;
-  if (ntfyTopic && !$('f-notify').dataset.touched) $('f-notify').checked = true;
-  if (!ntfyTopic) $('f-notify').checked = false;
+  if (!ntfyTopic) $('f-notify').value = 'off';
+  else if (!$('f-notify').dataset.touched) $('f-notify').value = 'quiet';
   $('notifyHint').textContent = ntfyTopic ? 'Sends a push notification through ntfy at the unlock time.' : 'Set up notifications further down the page first.';
 }
 function nMsg(text, cls) { const m = $('n-msg'); m.hidden = false; m.className = cls || 'net'; m.textContent = text; }
-async function ntfySend(seq, at, title, body) {
-  const headers = { Title: title, Tags: 'unlock', Priority: '4', Click: location.origin + location.pathname };
+/* Quiet hours: saved on this device, and copied into each lock set to "not during quiet hours"
+   (with the time zone) so other devices and the GitHub job follow the same rule. */
+const QUIET_KEY = 'timelock.quiet', TZ = (Intl.DateTimeFormat().resolvedOptions().timeZone) || 'UTC';
+let quiet = { from: '22:00', to: '07:00', act: 'skip' };
+try { quiet = Object.assign(quiet, JSON.parse(localStorage.getItem(QUIET_KEY) || '{}')); } catch (e) {}
+const quietRule = () => ({ from: quiet.from, to: quiet.to, act: quiet.act, tz: TZ });
+function setNotify(L, mode) {
+  if (mode === 'always') { L.notify = true; delete L.quiet; }
+  else if (mode === 'quiet') { L.notify = 'quiet'; L.quiet = quietRule(); }
+  else { L.notify = false; delete L.quiet; }
+}
+const fmtCache = {};
+function localMinutes(ms, tz) {
+  const f = fmtCache[tz] || (fmtCache[tz] = new Intl.DateTimeFormat('en-GB', { timeZone: tz, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }));
+  const [h, m] = f.format(new Date(ms)).split(':').map(Number); return h * 60 + m;
+}
+function inQuiet(ms, q) {
+  const toM = s => { const [h, m] = s.split(':').map(Number); return h * 60 + m; };
+  const f = toM(q.from), e = toM(q.to), m = localMinutes(ms, q.tz || TZ);
+  return f === e ? false : f < e ? m >= f && m < e : m >= f || m < e;
+}
+function quietEnd(ms, q) { let t = Math.ceil(ms / 60000) * 60000; for (let i = 0; i < 1500 && inQuiet(t, q); i++) t += 60000; return t; }
+// Adjust one booking for quiet hours: returns it (maybe silent or moved), or null to skip it.
+function applyQuiet(L, x, isWindow) {
+  x.p = 4;
+  if (L.notify !== 'quiet' || !L.quiet || !inQuiet(x.at, L.quiet)) return x;
+  if (L.quiet.act === 'silent') { x.p = 2; return x; }
+  if (L.quiet.act === 'defer' && !isWindow) return Object.assign(x, { at: quietEnd(x.at, L.quiet), body: '"' + L.label + '" unlocked at ' + hm(x.at) + '.' });
+  return null;
+}
+function saveQuiet() {
+  quiet = { from: $('q-from').value || '22:00', to: $('q-to').value || '07:00', act: $('q-act').value };
+  try { localStorage.setItem(QUIET_KEY, JSON.stringify(quiet)); } catch (e) {}
+  for (const L of locks) if (L.notify === 'quiet' && !L.deleted) { L.quiet = quietRule(); touch(L); }
+  save(); render(); bookAll();
+}
+['q-from', 'q-to', 'q-act'].forEach(id => $(id).addEventListener('change', saveQuiet));
+$('q-from').value = quiet.from; $('q-to').value = quiet.to; $('q-act').value = quiet.act;
+
+async function ntfySend(seq, at, title, body, prio) {
+  const headers = { Title: title, Tags: 'unlock', Priority: String(prio || 4), Click: location.origin + location.pathname };
   if (at) headers.At = String(Math.floor(at / 1000));
   const r = await fetch(NTFY + '/' + ntfyTopic + (seq ? '/' + seq : ''), { method: 'POST', headers, body });
   if (!r.ok) throw new Error(r.status === 429 ? 'ntfy says too many messages today. Try again later.' : 'ntfy returned an error (' + r.status + ').');
@@ -526,18 +568,18 @@ function targets(L, t) {
   const out = [], label = L.label;
   if (!repeating(L)) {
     const at = Math.min(L.capsule ? L.capsule.at : Infinity, L.safety ? L.safety.at : Infinity);
-    if (at < Infinity) out.push({ seq: 'tl' + L.id, at, body: '"' + label + '" is unlocking now.' });
+    if (at < Infinity) out.push(applyQuiet(L, { seq: 'tl' + L.id, at, body: '"' + label + '" is unlocking now.' }, false));
   } else {
     let w = nextWindowStart(L, t);
     const horizon = t + (L.mode === 'cycle' ? 26 * 3600000 : MAX_AHEAD);
     for (let i = 0; i < 40 && w && w <= horizon; i++) {
       const end = L.mode === 'cycle' ? w + L.openMs : (schedIntervals(L, w).find(x => x[0] === w) || [w, w])[1];
-      out.push({ seq: 'tl' + L.id + '-' + Math.floor(w / 1000), at: w, body: '"' + label + '" is visible now until ' + hm(end) + '.' });
+      out.push(applyQuiet(L, { seq: 'tl' + L.id + '-' + Math.floor(w / 1000), at: w, body: '"' + label + '" is visible now until ' + hm(end) + '.' }, true));
       w = nextWindowStart(L, w);
     }
-    if (L.safety) out.push({ seq: 'tl' + L.id + '-safe', at: L.safety.at, body: '"' + label + '" is unlocking for good (safety unlock).' });
+    if (L.safety) out.push(applyQuiet(L, { seq: 'tl' + L.id + '-safe', at: L.safety.at, body: '"' + label + '" is unlocking for good (safety unlock).' }, false));
   }
-  return out.filter(x => x.at - t > 15000 && x.at - t <= MAX_AHEAD);
+  return out.filter(x => x && x.at - t > 15000 && x.at - t <= MAX_AHEAD);
 }
 let booking = false;
 async function bookAll() {
@@ -549,10 +591,16 @@ async function bookAll() {
       if (L.opened && L.booked) cancelBookings(L, t); // opened early (safety): drop the rest
       L.booked = L.booked || {};
       let changed = false;
-      for (const k of Object.keys(L.booked)) if (L.booked[k] < t - 3600000) { delete L.booked[k]; changed = true; }
-      for (const x of targets(L, t)) {
-        if (L.booked[x.seq] === x.at) continue;
-        try { await ntfySend(x.seq, x.at, 'Time Lock', x.body); L.booked[x.seq] = x.at; touch(L); saveLocal(); changed = true; }
+      const bk = v => typeof v === 'number' ? { at: v, p: 4 } : v; // older versions stored just the time
+      for (const k of Object.keys(L.booked)) if (bk(L.booked[k]).at < t - 3600000) { delete L.booked[k]; changed = true; }
+      const want = targets(L, t), seqs = new Set(want.map(x => x.seq));
+      for (const k of Object.keys(L.booked)) { // booked earlier but no longer wanted (e.g. now in quiet hours): cancel
+        if (!seqs.has(k) && bk(L.booked[k]).at - t > 60000) { fetch(NTFY + '/' + ntfyTopic + '/' + k, { method: 'DELETE' }).catch(() => {}); delete L.booked[k]; changed = true; }
+      }
+      for (const x of want) {
+        const b = L.booked[x.seq] && bk(L.booked[x.seq]);
+        if (b && b.at === x.at && b.p === x.p) continue;
+        try { await ntfySend(x.seq, x.at, 'Time Lock', x.body, x.p); L.booked[x.seq] = { at: x.at, p: x.p }; touch(L); saveLocal(); changed = true; }
         catch (e) { nMsg(e instanceof TypeError ? "Can't reach ntfy right now. Notifications will be booked when you're back online." : e.message, 'err'); break; }
       }
       if (!Object.keys(L.booked).length) delete L.booked;
@@ -562,7 +610,8 @@ async function bookAll() {
 }
 function cancelBookings(L, after) {
   if (!ntfyTopic || !L.booked) return;
-  for (const [seq, at] of Object.entries(L.booked)) {
+  for (const [seq, v] of Object.entries(L.booked)) {
+    const at = typeof v === 'number' ? v : v.at;
     if (after && at <= after) continue;
     fetch(NTFY + '/' + ntfyTopic + '/' + seq, { method: 'DELETE' }).catch(() => {});
   }

@@ -101,7 +101,9 @@ button.btn.danger{color:var(--warn)}
       <label>Number or code<input id="f-num" type="text" inputmode="numeric" placeholder="e.g. 4821" spellcheck="false"></label>
     </div>
 
-    <label class="check" id="notifyRow"><input type="checkbox" id="f-notify"><span>Notify me when it unlocks<small id="notifyHint">Set up notifications further down the page first.</small></span></label>
+    <div class="row" id="notifyRow">
+      <label>Notify me when it unlocks<select id="f-notify"><option value="always">Always</option><option value="quiet">Not during quiet hours</option><option value="off">Off</option></select><small id="notifyHint" style="font-weight:400;color:var(--muted)">Set up notifications further down the page first.</small></label>
+    </div>
     <label class="check"><input type="checkbox" id="f-pin"><span>Pin to top<small>Shows this lock at the top of the page, above New lock.</small></span></label>
 
     <div>
@@ -196,6 +198,19 @@ button.btn.danger{color:var(--warn)}
       <button class="btn" type="button" id="n-test">Send test</button>
       <button class="btn danger" type="button" id="n-clear" hidden>Turn off</button>
     </div>
+    <div class="sect">
+      <div style="font-weight:600">Quiet hours</div>
+      <p class="note">Applies to locks set to "Not during quiet hours". Uses this phone's time zone.</p>
+      <div class="row">
+        <label>From<input id="q-from" type="time" value="22:00"></label>
+        <label>Until<input id="q-to" type="time" value="07:00"></label>
+      </div>
+      <label>During quiet hours<select id="q-act">
+        <option value="skip">Don't notify</option>
+        <option value="silent">Notify silently (no sound or vibration)</option>
+        <option value="defer">Wait until quiet hours end</option>
+      </select><small style="font-weight:400;color:var(--muted)">"Wait" applies to one-time unlocks. Repeating windows that fall in quiet hours are skipped, since they'd be over by morning.</small></label>
+    </div>
     <p id="n-msg" class="net" hidden></p>
   </section>
 
@@ -264,9 +279,9 @@ button.btn.danger{color:var(--warn)}
     <p>The number itself is never saved before it unlocks. Only the sealed version is. Unlocking needs an internet connection to fetch the published key.</p>
     <p>Limits: once a number is shown, you know it. Repeating locks rely on this page re-sealing the number during each window. If drand stopped running before your unlock time, the number could not be recovered, so keep a separate backup of anything you can't afford to lose.</p>
   </details>
-  <p class="net" style="text-align:center;margin:0">Version 10</p>
+  <p class="net" style="text-align:center;margin:0">Version 11</p>
 </div>
 <script src="vendor/tlock.js?v=0.9.0"></script>
-<script src="app.js?v=10"></script>
+<script src="app.js?v=11"></script>
 </body>
 </html>
