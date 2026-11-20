@@ -273,6 +273,7 @@ function cardHTML(L) {
     if (L.once && repeating(L)) extra.push('one reveal per window');
     if (L.peekSec) extra.push('brief reveal ' + L.peekSec + 's');
     if (L.protect) extra.push('protected from deletion');
+    if (ntfyTopic && L.notify && !L.opened && planned) { const np = nextPlanned(L); extra.push(np ? 'next notification ' + when(np.at) + (np.prio <= 2 ? ' (silent)' : '') : 'notification not booked yet (ntfy books up to 3 days ahead)'); }
     if (L.pending) extra.push('change waiting for the next unlock: ' + ruleTxt(Object.assign({}, L, L.pending)));
     return `<article class="card${visible ? ' open' : ''}${L.pinned ? ' pinned' : ''}">
       <div class="top"><h3>${esc(L.label)}</h3><span class="pill ${pill[0]}">${pill[1]}</span></div>
@@ -769,8 +770,7 @@ function setupFromLink() {
   history.replaceState(null, '', location.pathname + location.search);
   try { const cfg = JSON.parse(b64dec(decodeURIComponent(m[1]))); if (cfg.ntfy) setTopic(cfg.ntfy); if (cfg.repo && cfg.token) connect(cfg.repo, cfg.token); } catch (e) {}
 }
-setupFromLink();
-window.addEventListener('hashchange', setupFromLink);
+window.addEventListener('hashchange', setupFromLink); // the link itself is applied at start-up, once everything has loaded
 
 /* ---------- unlock notifications through ntfy ---------- */
 const NTFY = 'https://ntfy.sh', NTFY_KEY = 'timelock.ntfy', MAX_AHEAD = 3 * 86400000 - 10 * 60000;
@@ -781,7 +781,7 @@ const hm = ms => new Date(ms).toLocaleTimeString(undefined, { hour: 'numeric', m
 function setTopic(t) {
   ntfyTopic = t || null;
   try { if (ntfyTopic) localStorage.setItem(NTFY_KEY, ntfyTopic); else localStorage.removeItem(NTFY_KEY); } catch (e) {}
-  renderNotify();
+  planned = null; renderNotify(); renderPlanned();
 }
 function renderNotify() {
   $('n-topic').value = ntfyTopic || $('n-topic').value;
@@ -856,33 +856,81 @@ function targets(L, t) {
   }
   return out.filter(x => x && x.at - t > 15000 && x.at - t <= MAX_AHEAD);
 }
-let booking = false;
+/* Booking works from what ntfy actually has scheduled (it can list them), so bookings made by another
+   phone or by the GitHub job are corrected too: missing ones are booked, ones at the wrong time or
+   loudness are replaced, and ones no current lock wants are cancelled. */
+let booking = false, planned = null, plannedAt = 0; // planned: [{seq, at, msg, prio}] from ntfy
+async function fetchPlanned() {
+  const r = await fetch(NTFY + '/' + ntfyTopic + '/json?poll=1&sched=1', { cache: 'no-store' });
+  if (!r.ok) throw new Error('ntfy returned an error (' + r.status + ').');
+  const t = now(), out = [];
+  for (const line of (await r.text()).split('\n')) {
+    if (!line.trim()) continue;
+    let m; try { m = JSON.parse(line); } catch (e) { continue; }
+    if (m.event === 'message' && m.time * 1000 > t) out.push({ seq: m.sequence_id || null, at: m.time * 1000, msg: m.message || '', prio: m.priority || 3 });
+  }
+  return out.sort((a, b) => a.at - b.at);
+}
+const ownerOf = seq => seq && locks.find(L => !L.deleted && (seq === 'tl' + L.id || seq.startsWith('tl' + L.id + '-')));
 async function bookAll() {
   if (!ntfyTopic || booking) return;
   booking = true;
   try {
-    const t = now();
+    const t = now(), want = new Map();
     for (const L of locks) {
-      if (L.opened && L.booked) cancelBookings(L, t); // opened early (safety): drop the rest
+      if (L.opened && L.booked) cancelBookings(L, t);
+      for (const x of targets(L, t)) want.set(x.seq, { x, L });
+    }
+    let sched = null;
+    try { sched = await fetchPlanned(); } catch (e) { /* fall back to this phone's own records */ }
+    if (sched) { // sanity check: if ntfy lists none of the future bookings this phone made, don't trust the list
+      const mine = locks.flatMap(L => Object.entries(L.booked || {}).filter(([, v]) => (typeof v === 'number' ? v : v.at) - t > 120000).map(([k]) => k));
+      if (mine.length && !mine.some(k => sched.some(x => x.seq === k))) sched = null;
+    }
+    const bySeq = new Map((sched || []).filter(s => s.seq).map(s => [s.seq, s]));
+    const bk = v => typeof v === 'number' ? { at: v, p: 4 } : v;
+    const dirty = new Set();
+    for (const [seq, { x, L }] of want) {
       L.booked = L.booked || {};
-      let changed = false;
-      const bk = v => typeof v === 'number' ? { at: v, p: 4 } : v; // older versions stored just the time
-      for (const k of Object.keys(L.booked)) if (bk(L.booked[k]).at < t - 3600000) { delete L.booked[k]; changed = true; }
-      const want = targets(L, t), seqs = new Set(want.map(x => x.seq));
-      for (const k of Object.keys(L.booked)) { // booked earlier but no longer wanted (e.g. now in quiet hours): cancel
-        if (!seqs.has(k) && bk(L.booked[k]).at - t > 60000) { fetch(NTFY + '/' + ntfyTopic + '/' + k, { method: 'DELETE' }).catch(() => {}); delete L.booked[k]; changed = true; }
-      }
-      for (const x of want) {
-        const b = L.booked[x.seq] && bk(L.booked[x.seq]);
-        if (b && b.at === x.at && b.p === x.p) continue;
-        try { await ntfySend(x.seq, x.at, 'Time Lock', x.body, x.p); L.booked[x.seq] = { at: x.at, p: x.p }; touch(L); saveLocal(); changed = true; }
-        catch (e) { nMsg(e instanceof TypeError ? "Can't reach ntfy right now. Notifications will be booked when you're back online." : e.message, 'err'); break; }
+      const s = bySeq.get(seq), b = L.booked[seq] && bk(L.booked[seq]);
+      const ok = sched ? s && Math.abs(s.at - x.at) < 60000 && s.prio === x.p : b && b.at === x.at && b.p === x.p;
+      if (ok) { if (!b || b.at !== x.at) { L.booked[seq] = { at: x.at, p: x.p }; dirty.add(L); } continue; }
+      try {
+        await ntfySend(seq, x.at, 'Time Lock', x.body, x.p);
+        L.booked[seq] = { at: x.at, p: x.p }; dirty.add(L);
+        if (sched) bySeq.set(seq, { seq, at: x.at, msg: x.body, prio: x.p });
+      } catch (e) { nMsg(e instanceof TypeError ? "Can't reach ntfy right now. Notifications will be booked when you're back online." : e.message, 'err'); break; }
+    }
+    const cancel = seq => { fetch(NTFY + '/' + ntfyTopic + '/' + seq, { method: 'DELETE' }).catch(() => {}); bySeq.delete(seq); };
+    if (sched) { // anything booked on ntfy that no lock wants now gets cancelled, whoever booked it
+      for (const s of sched) if (s.seq && s.seq.startsWith('tl') && !want.has(s.seq) && s.at - t > 60000) cancel(s.seq);
+    }
+    for (const L of locks) { // tidy this phone's records
+      if (!L.booked) continue;
+      for (const k of Object.keys(L.booked)) {
+        const v = bk(L.booked[k]);
+        if (v.at < t - 3600000 || (!want.has(k) && v.at - t > 60000)) { if (!sched && v.at - t > 60000) cancel(k); delete L.booked[k]; dirty.add(L); }
       }
       if (!Object.keys(L.booked).length) delete L.booked;
-      if (changed) { touch(L); save(); }
     }
+    dirty.forEach(L => touch(L)); if (dirty.size) save();
+    if (sched) { planned = [...bySeq.values(), ...sched.filter(s => !s.seq)].filter(s => s.at > t).sort((a, b) => a.at - b.at); plannedAt = now(); renderPlanned(); }
   } finally { booking = false; }
 }
+function renderPlanned() {
+  const box = $('plannedList'); if (!box) return;
+  if (!ntfyTopic) { $('plannedSect').hidden = true; return; }
+  $('plannedSect').hidden = false;
+  if (!planned) { box.innerHTML = '<p class="note">Not checked yet.</p>'; return; }
+  $('plannedWhen').textContent = 'Checked with ntfy at ' + new Date(plannedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '.';
+  box.innerHTML = planned.length ? planned.slice(0, 40).map(s => {
+    const L = ownerOf(s.seq);
+    return `<div class="plan"><span class="count">${esc(when(s.at))}</span><span>${esc(s.msg)}${s.prio <= 2 ? ' <span class="pill busy">silent</span>' : ''}${s.seq && !L ? ' <span class="pill locked">no lock</span>' : ''}</span></div>`;
+  }).join('') + (planned.length > 40 ? `<p class="note">and ${planned.length - 40} more</p>` : '')
+    : '<p class="note">Nothing booked right now.</p>';
+}
+const nextPlanned = L => planned && planned.find(s => s.seq && (s.seq === 'tl' + L.id || s.seq.startsWith('tl' + L.id + '-')));
+$('plannedRefresh').addEventListener('click', async () => { $('plannedWhen').textContent = 'Checking…'; await bookAll(); renderPlanned(); render(); });
 function cancelBookings(L, after) {
   if (!ntfyTopic || !L.booked) return;
   for (const [seq, v] of Object.entries(L.booked)) {
@@ -905,6 +953,7 @@ $('n-test').addEventListener('click', async () => {
 $('n-clear').addEventListener('click', () => { setTopic(null); $('n-topic').value = ''; nMsg('Notifications are off on this device.', 'net'); render(); });
 $('f-notify').addEventListener('change', () => { $('f-notify').dataset.touched = '1'; });
 renderNotify();
+renderPlanned();
 
 /* ---------- network clock check ---------- */
 async function checkNet() {
@@ -921,6 +970,7 @@ async function checkNet() {
 locks = load();
 render();
 migrate();
+setupFromLink();
 checkNet();
 setInterval(() => { locks.forEach(L => { process(L); }); render(); }, 1000);
 setInterval(checkNet, 5 * 60000);

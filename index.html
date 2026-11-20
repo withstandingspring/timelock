@@ -76,6 +76,8 @@ button.btn.danger{color:var(--warn)}
 .note{font-size:.82rem;color:var(--muted);border-left:3px solid var(--line);padding-left:10px;margin:0}
 .alert{background:var(--warn-soft);color:var(--warn);border-radius:8px;padding:10px 12px;font-size:.88rem}
 .exRule{border:1px solid var(--line);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:10px}
+.plan{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:.88rem;align-items:baseline}
+.plan .count{min-width:0}
 .empty{color:var(--muted);text-align:center;padding:24px}
 .how p{margin:8px 0 0;color:var(--muted);font-size:.9rem}
 </style>
@@ -137,10 +139,10 @@ button.btn.danger{color:var(--warn)}
     <div>
       <div style="font-weight:600;font-size:.88rem;margin-bottom:6px">When can it be seen?</div>
       <div class="modes" id="modes">
-        <button type="button" class="mode" data-mode="until" aria-pressed="true">Until a date<small>Unlocks at a set date and time</small></button>
+        <button type="button" class="mode" data-mode="cycle" aria-pressed="false">Repeating cycle<small>Locked X, open Y, repeat</small></button>
         <button type="button" class="mode" data-mode="duration" aria-pressed="false">For a duration<small>Locked for a set time from now</small></button>
         <button type="button" class="mode" data-mode="schedule" aria-pressed="false">On a schedule<small>Only on chosen days and hours</small></button>
-        <button type="button" class="mode" data-mode="cycle" aria-pressed="false">Repeating cycle<small>Locked X, open Y, repeat</small></button>
+        <button type="button" class="mode" data-mode="until" aria-pressed="true">Until a date<small>Unlocks at a set date and time</small></button>
       </div>
     </div>
 
@@ -244,6 +246,12 @@ button.btn.danger{color:var(--warn)}
         <option value="defer">Wait until quiet hours end</option>
       </select><small style="font-weight:400;color:var(--muted)">"Wait" applies to one-time unlocks. Repeating windows that fall in quiet hours are skipped, since they'd be over by morning.</small></label>
     </div>
+    <div class="sect" id="plannedSect" hidden>
+      <div style="font-weight:600">Planned notifications</div>
+      <p class="note"><span id="plannedWhen"></span> This is the list ntfy itself holds, so it's exactly what will be sent. It refreshes about once a minute while this page is open.</p>
+      <div id="plannedList" style="display:flex;flex-direction:column;gap:6px"></div>
+      <div><button class="btn" type="button" id="plannedRefresh">Check now</button></div>
+    </div>
     <p id="n-msg" class="net" hidden></p>
   </section>
 
@@ -312,9 +320,9 @@ button.btn.danger{color:var(--warn)}
     <p>The number itself is never saved before it unlocks. Only the sealed version is. Unlocking needs an internet connection to fetch the published key.</p>
     <p>Limits: once a number is shown, you know it. Repeating locks rely on this page re-sealing the number during each window. If drand stopped running before your unlock time, the number could not be recovered, so keep a separate backup of anything you can't afford to lose.</p>
   </details>
-  <p class="net" style="text-align:center;margin:0">Version 17</p>
+  <p class="net" style="text-align:center;margin:0">Version 18</p>
 </div>
 <script src="vendor/tlock.js?v=0.9.0"></script>
-<script src="app.js?v=17"></script>
+<script src="app.js?v=18"></script>
 </body>
 </html>

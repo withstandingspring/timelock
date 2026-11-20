@@ -49,6 +49,10 @@ Each lock can notify always, not during quiet hours, or not at all. Quiet hours 
 in the phone's time zone) can skip the notification, send it silently, or hold a one-time unlock's
 notification until they end. The rule is saved with each lock so other devices and the GitHub job follow it.
 
+Whenever it books, the app first asks ntfy for the notifications it has scheduled, then books what's
+missing, replaces what's at the wrong time, and cancels what no lock wants, including bookings made by
+another device or the GitHub job. The Unlock notifications section lists what ntfy has scheduled.
+
 ntfy only accepts bookings up to 3 days ahead. A scheduled GitHub Actions job in the private data
 repository books upcoming notifications every 12 hours, so long locks are covered even if the app isn't opened.
 
