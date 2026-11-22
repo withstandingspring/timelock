@@ -939,14 +939,62 @@ function saveQuiet() {
 ['q-from', 'q-to', 'q-act'].forEach(id => $(id).addEventListener('change', saveQuiet));
 $('q-from').value = quiet.from; $('q-to').value = quiet.to; $('q-act').value = quiet.act;
 
-async function ntfySend(seq, at, title, body, prio) {
-  const headers = { Title: title, Tags: 'unlock', Priority: String(prio || 4), Click: location.origin + location.pathname };
-  if (at) headers.At = String(Math.floor(at / 1000));
-  const r = await fetch(NTFY + '/' + ntfyTopic + (seq ? '/' + seq : ''), { method: 'POST', headers, body });
-  if (!r.ok) throw new Error(r.status === 429 ? 'ntfy says too many messages today. Try again later.' : 'ntfy returned an error (' + r.status + ').');
+/* Every message to ntfy goes through ntfyCall: it keeps a log on this phone, caps sending at DAY_CAP a day,
+   never repeats an identical send within 30 minutes, and pauses for an hour if ntfy says the quota is used up. */
+const DAY_CAP = 50, LOG_KEY = 'timelock.sendlog', PAUSE_KEY = 'timelock.ntfyPause';
+let sendLog = [], quotaUntil = 0;
+try { sendLog = JSON.parse(localStorage.getItem(LOG_KEY) || '[]') || []; quotaUntil = +localStorage.getItem(PAUSE_KEY) || 0; } catch (e) {}
+const midnight = () => { const d = new Date(now()); d.setHours(0, 0, 0, 0); return +d; };
+const sentToday = () => sendLog.filter(e => e.t >= midnight() && e.ok && e.k !== 'skip').length;
+function logSend(e) {
+  sendLog.push(Object.assign({ t: now() }, e));
+  const cut = now() - 3 * 86400000; sendLog = sendLog.filter(x => x.t > cut).slice(-300);
+  try { localStorage.setItem(LOG_KEY, JSON.stringify(sendLog)); } catch (er) {}
+  renderSendStatus();
+}
+class Paused extends Error {}
+async function ntfyCall(kind, seq, opts) { // kind: book | cancel | test
+  const t = now(), key = [kind, seq, opts.at || '', opts.prio || '', opts.body || ''].join('|'), label = (ownerOf(seq) || {}).label || '';
+  if (quotaUntil > t) throw new Paused('ntfy\'s daily limit was reached. Paused until ' + hm(quotaUntil) + '.');
+  if (sentToday() >= DAY_CAP) {
+    if (!sendLog.some(e => e.k === 'cap' && e.t >= midnight())) logSend({ k: 'cap', ok: false, note: 'Daily limit of ' + DAY_CAP + ' reached on this phone' });
+    throw new Paused('This phone has sent ' + DAY_CAP + ' notifications to ntfy today, its safety limit. Sending resumes after midnight.');
+  }
+  if (kind !== 'test' && sendLog.some(e => e.key === key && e.ok && t - e.t < 30 * 60000)) {
+    if (!sendLog.some(e => e.k === 'skip' && e.seq === seq && t - e.t < 30 * 60000)) logSend({ k: 'skip', seq, label, at: opts.at, ok: true, note: 'Identical send within 30 minutes skipped' });
+    return;
+  }
+  let r;
+  if (kind === 'cancel') r = await fetch(NTFY + '/' + ntfyTopic + '/' + seq, { method: 'DELETE' });
+  else {
+    const headers = { Title: 'Time Lock', Tags: 'unlock', Priority: String(opts.prio || 4), Click: location.origin + location.pathname };
+    if (opts.at) headers.At = String(Math.floor(opts.at / 1000));
+    r = await fetch(NTFY + '/' + ntfyTopic + (seq ? '/' + seq : ''), { method: 'POST', headers, body: opts.body });
+  }
+  if (r.status === 429) {
+    quotaUntil = now() + 3600000; try { localStorage.setItem(PAUSE_KEY, String(quotaUntil)); } catch (e) {}
+    logSend({ k: kind, seq, label, at: opts.at, ok: false, note: 'ntfy: daily quota reached' });
+    throw new Paused("ntfy's daily message limit was reached. Paused until " + hm(quotaUntil) + ', then it tries again.');
+  }
+  logSend({ k: kind, seq, label, at: opts.at, ok: r.ok, key, note: r.ok ? '' : 'ntfy error ' + r.status });
+  if (!r.ok) throw new Error('ntfy returned an error (' + r.status + ').');
+}
+const ntfySend = (seq, at, title, body, prio) => ntfyCall(seq ? 'book' : 'test', seq, { at, body, prio });
+function renderSendStatus() {
+  const el = $('sendStatus'); if (!el) return;
+  const t = now(), n = sentToday(), paused = quotaUntil > t, capped = n >= DAY_CAP;
+  el.className = paused || capped ? 'err' : 'net';
+  el.textContent = paused ? "Paused: ntfy's daily message limit was reached. Trying again at " + hm(quotaUntil) + '. Sent today from this phone: ' + n + '.'
+    : capped ? 'Paused: this phone has sent ' + n + ' messages to ntfy today, its safety limit of ' + DAY_CAP + '. Resumes after midnight.'
+    : 'Sent to ntfy today from this phone: ' + n + ' of ' + DAY_CAP + '.';
+  const al = $('notifyAlert'); al.hidden = !(ntfyTopic && (paused || capped)); al.textContent = 'Notification booking is paused. See Unlock notifications for details.';
+  const kinds = { book: 'Booked', cancel: 'Cancelled', test: 'Test sent', skip: 'Skipped repeat', cap: 'Stopped' };
+  $('sendLogList').innerHTML = sendLog.length ? sendLog.slice(-60).reverse().map(e =>
+    `<div class="plan"><span class="count">${esc(new Date(e.t).toLocaleString(undefined, { weekday: 'short', hour: 'numeric', minute: '2-digit' }))}</span><span>${esc(kinds[e.k] || e.k)}${e.label ? ' · ' + esc(e.label) : ''}${e.at ? ' · for ' + esc(when(e.at)) : ''}${e.note ? ' · ' + esc(e.note) : ''}${e.ok === false ? ' <span class="pill locked">failed</span>' : ''}</span></div>`).join('')
+    : '<p class="note">Nothing sent from this phone yet.</p>';
 }
 // The times a lock should notify at, within ntfy's 3-day booking limit. Each gets a fixed ID so re-booking replaces it.
-function targets(L, t) {
+function targets(L, t, keep) { // keep: the wider range of bookings to leave alone (the GitHub job books further ahead)
   if (L.deleted || !L.notify) return [];
   if (L.req && L.gate && L.gate.waitMs) { // a wait in progress: tell me when it's ready
     const at = L.req.at + L.gate.waitMs;
@@ -959,7 +1007,7 @@ function targets(L, t) {
     if (at < Infinity) out.push(applyQuiet(L, { seq: 'tl' + L.id, at, body: '"' + label + '" is unlocking now.' }, false));
   } else {
     let w = nextWindowStart(L, t);
-    const horizon = t + (L.mode === 'cycle' ? 26 * 3600000 : MAX_AHEAD);
+    const horizon = t + (L.mode === 'cycle' ? (keep ? 26 : 6) * 3600000 : MAX_AHEAD);
     for (let i = 0; i < 40 && w && w <= horizon; i++) {
       const end = L.mode === 'cycle' ? w + L.openMs : (schedIntervals(L, w).find(x => x[0] === w) || [w, w])[1];
       out.push(applyQuiet(L, { seq: 'tl' + L.id + '-' + Math.floor(w / 1000), at: w, body: '"' + label + '" is visible now until ' + hm(end) + '.' }, true));
@@ -972,7 +1020,7 @@ function targets(L, t) {
 /* Booking works from what ntfy actually has scheduled (it can list them), so bookings made by another
    phone or by the GitHub job are corrected too: missing ones are booked, ones at the wrong time or
    loudness are replaced, and ones no current lock wants are cancelled. */
-let booking = false, planned = null, plannedAt = 0; // planned: [{seq, at, msg, prio}] from ntfy
+let booking = false, planned = null, plannedAt = 0, lastBook = 0; // planned: [{seq, at, msg, prio}] from ntfy
 async function fetchPlanned() {
   const r = await fetch(NTFY + '/' + ntfyTopic + '/json?poll=1&sched=1', { cache: 'no-store' });
   if (!r.ok) throw new Error('ntfy returned an error (' + r.status + ').');
@@ -989,10 +1037,11 @@ async function bookAll() {
   if (!ntfyTopic || booking) return;
   booking = true;
   try {
-    const t = now(), want = new Map();
+    const t = now(), want = new Map(), keepSeqs = new Set();
     for (const L of locks) {
       if (L.opened && L.booked) cancelBookings(L, t);
       for (const x of targets(L, t)) want.set(x.seq, { x, L });
+      for (const x of targets(L, t, true)) keepSeqs.add(x.seq);
     }
     let sched = null;
     try { sched = await fetchPlanned(); } catch (e) { /* fall back to this phone's own records */ }
@@ -1002,27 +1051,27 @@ async function bookAll() {
     }
     const bySeq = new Map((sched || []).filter(s => s.seq).map(s => [s.seq, s]));
     const bk = v => typeof v === 'number' ? { at: v, p: 4 } : v;
-    const dirty = new Set();
+    const dirty = new Set(); let stopped = false; lastBook = now();
     for (const [seq, { x, L }] of want) {
       L.booked = L.booked || {};
       const s = bySeq.get(seq), b = L.booked[seq] && bk(L.booked[seq]);
-      const ok = sched ? s && Math.abs(s.at - x.at) < 60000 && s.prio === x.p : b && b.at === x.at && b.p === x.p;
+      const ok = sched ? s && Math.abs(s.at - x.at) < 60000 && s.prio === x.p && (!s.msg || s.msg.startsWith('"' + L.label + '"')) : b && b.at === x.at && b.p === x.p;
       if (ok) { if (!b || b.at !== x.at) { L.booked[seq] = { at: x.at, p: x.p }; dirty.add(L); } continue; }
       try {
         await ntfySend(seq, x.at, 'Time Lock', x.body, x.p);
         L.booked[seq] = { at: x.at, p: x.p }; dirty.add(L);
         if (sched) bySeq.set(seq, { seq, at: x.at, msg: x.body, prio: x.p });
-      } catch (e) { nMsg(e instanceof TypeError ? "Can't reach ntfy right now. Notifications will be booked when you're back online." : e.message, 'err'); break; }
+      } catch (e) { nMsg(e instanceof TypeError ? "Can't reach ntfy right now. Notifications will be booked when you're back online." : e.message, 'err'); stopped = true; break; }
     }
-    const cancel = seq => { fetch(NTFY + '/' + ntfyTopic + '/' + seq, { method: 'DELETE' }).catch(() => {}); bySeq.delete(seq); };
+    const cancel = seq => { if (stopped) return; ntfyCall('cancel', seq, {}).catch(e => { if (e instanceof Paused) stopped = true; }); bySeq.delete(seq); };
     if (sched) { // anything booked on ntfy that no lock wants now gets cancelled, whoever booked it
-      for (const s of sched) if (s.seq && s.seq.startsWith('tl') && !want.has(s.seq) && s.at - t > 60000) cancel(s.seq);
+      for (const s of sched) if (s.seq && s.seq.startsWith('tl') && !want.has(s.seq) && !keepSeqs.has(s.seq) && s.at - t > 60000) cancel(s.seq);
     }
     for (const L of locks) { // tidy this phone's records
       if (!L.booked) continue;
       for (const k of Object.keys(L.booked)) {
         const v = bk(L.booked[k]);
-        if (v.at < t - 3600000 || (!want.has(k) && v.at - t > 60000)) { if (!sched && v.at - t > 60000) cancel(k); delete L.booked[k]; dirty.add(L); }
+        if (v.at < t - 3600000 || (!want.has(k) && !keepSeqs.has(k) && v.at - t > 60000)) { if (!sched && v.at - t > 60000) cancel(k); delete L.booked[k]; dirty.add(L); }
       }
       if (!Object.keys(L.booked).length) delete L.booked;
     }
@@ -1049,7 +1098,7 @@ function cancelBookings(L, after) {
   for (const [seq, v] of Object.entries(L.booked)) {
     const at = typeof v === 'number' ? v : v.at;
     if (after && at <= after) continue;
-    fetch(NTFY + '/' + ntfyTopic + '/' + seq, { method: 'DELETE' }).catch(() => {});
+    ntfyCall('cancel', seq, {}).catch(() => {});
   }
   L.booked = {};
 }
@@ -1063,6 +1112,7 @@ $('n-test').addEventListener('click', async () => {
   try { await ntfySend(null, 0, 'Time Lock', 'Test notification. Unlock notifications are working.'); nMsg('Sent. It should arrive on your phone within a few seconds.', 'ok'); }
   catch (e) { nMsg(e instanceof TypeError ? "Couldn't reach ntfy. Check your connection." : e.message, 'err'); }
 });
+renderSendStatus();
 $('n-clear').addEventListener('click', () => { setTopic(null); $('n-topic').value = ''; nMsg('Notifications are off on this device.', 'net'); render(); });
 $('f-notify').addEventListener('change', () => { $('f-notify').dataset.touched = '1'; });
 renderNotify();
@@ -1088,6 +1138,6 @@ checkNet();
 setInterval(() => { locks.forEach(L => { process(L); }); gateTick(); render(); }, 1000);
 setInterval(checkNet, 5 * 60000);
 syncNow().then(bookAll);
-setInterval(() => { if (!document.hidden) syncNow().then(bookAll); }, 60000);
+setInterval(() => { if (!document.hidden) syncNow().then(() => { if (now() - lastBook > 10 * 60000) bookAll(); renderSendStatus(); }); }, 60000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) { syncNow(); locks.forEach(L => { process(L); }); render(); } });
 })();

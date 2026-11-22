@@ -96,6 +96,7 @@ button.btn.danger{color:var(--warn)}
   </header>
 
   <div id="clockAlert" class="alert" hidden></div>
+  <div id="notifyAlert" class="alert" hidden></div>
 
   <section class="panel" id="exEdit" hidden>
     <h2 id="exEditTitle">Exclusions</h2>
@@ -270,9 +271,18 @@ button.btn.danger{color:var(--warn)}
     </div>
     <div class="sect" id="plannedSect" hidden>
       <div style="font-weight:600">Planned notifications</div>
-      <p class="note"><span id="plannedWhen"></span> This is the list ntfy itself holds, so it's exactly what will be sent. It refreshes about once a minute while this page is open.</p>
+      <p class="note"><span id="plannedWhen"></span> This is the list ntfy itself holds, so it's exactly what will be sent. It refreshes about every 10 minutes while this page is open, and straight away after any change.</p>
       <div id="plannedList" style="display:flex;flex-direction:column;gap:6px"></div>
       <div><button class="btn" type="button" id="plannedRefresh">Check now</button></div>
+    </div>
+    <div class="sect">
+      <div style="font-weight:600">Sending</div>
+      <p id="sendStatus" class="net" style="margin:0"></p>
+      <details>
+        <summary>Sending log for this phone</summary>
+        <p class="note">Every booking and cancellation this phone sent to ntfy in the last 3 days. Each one counts towards ntfy's free daily limit. The app stops at 50 a day per phone, and never repeats an identical send within 30 minutes.</p>
+        <div id="sendLogList" style="display:flex;flex-direction:column;gap:6px;margin-top:8px"></div>
+      </details>
     </div>
     <p id="n-msg" class="net" hidden></p>
   </section>
@@ -342,9 +352,9 @@ button.btn.danger{color:var(--warn)}
     <p>The number itself is never saved before it unlocks. Only the sealed version is. Unlocking needs an internet connection to fetch the published key.</p>
     <p>Limits: once a number is shown, you know it. Repeating locks rely on this page re-sealing the number during each window. If drand stopped running before your unlock time, the number could not be recovered, so keep a separate backup of anything you can't afford to lose.</p>
   </details>
-  <p class="net" style="text-align:center;margin:0">Version 20</p>
+  <p class="net" style="text-align:center;margin:0">Version 21</p>
 </div>
 <script src="vendor/tlock.js?v=0.9.0"></script>
-<script src="app.js?v=20"></script>
+<script src="app.js?v=21"></script>
 </body>
 </html>
