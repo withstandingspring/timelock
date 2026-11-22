@@ -50,6 +50,7 @@ const mem = {};    // id -> {num, until}  plaintext for an open repeating window
 const peeks = {};  // id -> ms when the brief reveal ends
 const busy = {};   // id -> true while unlocking or re-sealing
 const errs = {};   // id -> {msg, retryAt}
+const fresh = {}; let sealedOk = false, sealedTimer = null;
 let confirmDel = null, confirmExt = null, confirmRelock = null, skew = 0, netOk = null;
 
 function load() { try { const r = localStorage.getItem(KEY); return r ? JSON.parse(r) : []; } catch (e) { return []; } }
@@ -282,7 +283,8 @@ function cardHTML(L) {
     if (L.gate && L.gate.waitMs) extra.push(unitTxt(L.gate.waitMs) + ' wait after Request');
     if (ntfyTopic && L.notify && !L.opened && planned) { const np = nextPlanned(L); extra.push(np ? 'next notification ' + when(np.at) + (np.prio <= 2 ? ' (silent)' : '') : 'notification not booked yet (ntfy books up to 3 days ahead)'); }
     if (L.pending) extra.push('change waiting for the next unlock: ' + ruleTxt(Object.assign({}, L, L.pending)));
-    return `<article class="card${visible ? ' open' : ''}${L.pinned ? ' pinned' : ''}">
+    const fr = fresh[L.id] && t - fresh[L.id] < 3000 ? t - fresh[L.id] : null; // new-lock glow; negative delay keeps it smooth across refreshes
+    return `<article class="card${visible ? ' open' : ''}${L.pinned ? ' pinned' : ''}${fr != null ? ' fresh' : ''}"${fr != null ? ` style="animation-delay:-${fr}ms"` : ''}>
       <div class="top"><h3>${esc(L.label)}</h3><span class="pill ${pill[0]}">${pill[1]}</span></div>
       <div class="digits${visible ? '' : ' hidden'}">${visible ? esc(num) : '••••••'}</div>
       <div class="count">${esc(count)}</div>
@@ -639,9 +641,13 @@ $('form').addEventListener('submit', async e => {
       if (repeating(L) || safeAt < L.unlockAt) L.safety = await seal(safeAt, num);
     }
     locks.unshift(L); save(); bookAll();
+    fresh[L.id] = now(); sealedOk = true;
+    btn.classList.add('sealed'); btn.textContent = 'Sealed ✓';
+    const sm = $('sealMsg'); sm.textContent = 'Sealed "' + L.label + '". ' + (repeating(L) ? 'First visible ' : 'Opens ') + when(L.capsule.at) + '.'; sm.hidden = false;
+    clearTimeout(sealedTimer); sealedTimer = setTimeout(() => { btn.classList.remove('sealed'); if (!editId2) btn.textContent = 'Seal it'; sm.hidden = true; }, 6000);
     $('f-num').value = ''; $('f-label').value = ''; $('f-pin').checked = false; $('f-protect').checked = false; setGateForm(null); setDefaultDate(); setFirstWindow(nextHour());
   } catch (ex) { fail('Sealing failed: ' + ex.message); }
-  finally { btn.disabled = false; btn.textContent = 'Seal it'; render(); }
+  finally { btn.disabled = false; if (!sealedOk) btn.textContent = 'Seal it'; sealedOk = false; render(); }
 });
 
 /* ---------- editing a lock's timing ----------
@@ -661,7 +667,7 @@ function startEdit(L) {
   $('editNote').textContent = L.opened || mem[L.id] ? 'This lock is open, so any change applies straight away.'
     : 'Changes that make it open later apply straight away. Changes that would make it open sooner are saved and applied at the next unlock, ' + when(L.capsule ? L.capsule.at : now()) + '.';
   ['numRow', 'safeSect', 'pinRow', 'notifyRow'].forEach(id => { $(id).hidden = true; });
-  $('editCancel').hidden = false; $('submit').textContent = 'Save changes'; $('err').hidden = true;
+  $('editCancel').hidden = false; $('submit').classList.remove('sealed'); $('sealMsg').hidden = true; $('submit').textContent = 'Save changes'; $('err').hidden = true;
   $('f-label').value = L.label;
   const m = src.mode === 'duration' ? 'until' : src.mode;
   setMode(m);
