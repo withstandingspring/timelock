@@ -187,6 +187,22 @@ button.btn.danger{color:var(--warn)}
     </div>
     <p class="note" id="repeatNote" hidden>Repeating locks re-seal themselves while this page is open during a window. Open the page at least once in every window. If a window passes without it, the number stays openable by technical means until you next open the page.</p>
 
+    <div class="sect" id="gateSect">
+      <div style="font-weight:600">Extra conditions <span style="font-weight:400;color:var(--muted)">(optional)</span></div>
+      <p class="note">These apply once the time allows it. You tap Request and the app checks them. They're checks inside this app, so they slow you down but can be got around with effort.</p>
+      <label class="check"><input type="checkbox" id="g-loc"><span>Only show at a place<small>When you tap Request, the app checks your location once.</small></span></label>
+      <div id="g-locBox" hidden style="display:flex;flex-direction:column;gap:10px">
+        <div class="actions"><button class="btn" type="button" id="g-here">Use my current location</button></div>
+        <div class="row">
+          <label>Or paste coordinates<input id="g-coords" placeholder="-37.8136, 144.9631" spellcheck="false" autocomplete="off"></label>
+          <label>Radius (metres)<input id="g-r" type="number" min="50" value="150"></label>
+        </div>
+        <p class="note" id="g-where">No place set yet.</p>
+      </div>
+      <label class="check" id="g-waitRow"><input type="checkbox" id="g-wait"><span>Wait before showing<small>After you tap Request, the number shows once this time has passed. Not available for repeating cycles.</small></span></label>
+      <div id="g-waitBox" hidden class="row"><label>Wait (minutes)<input id="g-waitm" type="number" min="1" value="10"></label></div>
+    </div>
+
     <div class="sect" id="safeSect">
       <label class="check"><input type="checkbox" id="o-safe" checked><span>Safety unlock<small>A second sealed copy that opens for good after this time, so the number can't stay locked forever. Untick to turn it off.</small></span></label>
       <div class="row">
@@ -320,9 +336,9 @@ button.btn.danger{color:var(--warn)}
     <p>The number itself is never saved before it unlocks. Only the sealed version is. Unlocking needs an internet connection to fetch the published key.</p>
     <p>Limits: once a number is shown, you know it. Repeating locks rely on this page re-sealing the number during each window. If drand stopped running before your unlock time, the number could not be recovered, so keep a separate backup of anything you can't afford to lose.</p>
   </details>
-  <p class="net" style="text-align:center;margin:0">Version 18</p>
+  <p class="net" style="text-align:center;margin:0">Version 19</p>
 </div>
 <script src="vendor/tlock.js?v=0.9.0"></script>
-<script src="app.js?v=18"></script>
+<script src="app.js?v=19"></script>
 </body>
 </html>

@@ -13,6 +13,10 @@ doesn't help, because the key for that moment hasn't been published yet.
 - **Repeating cycle**: locked for X, visible for Y, repeating, set by when the first visible window starts. Exclusions (days plus all day
   or a time range, which can run past midnight) skip any window that overlaps them.
 
+Optional extra conditions per lock: a place (one location check when you tap Request) and a wait after
+Request (not for repeating cycles). They're checks inside the app, so they add friction rather than
+cryptographic protection.
+
 Any lock can be edited later. Changes that make it open the same or later apply at once (the seal is wrapped
 to the new time); changes that would open it sooner are saved and applied at the next unlock. While a lock is
 open, any change applies immediately.

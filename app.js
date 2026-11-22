@@ -50,7 +50,7 @@ const mem = {};    // id -> {num, until}  plaintext for an open repeating window
 const peeks = {};  // id -> ms when the brief reveal ends
 const busy = {};   // id -> true while unlocking or re-sealing
 const errs = {};   // id -> {msg, retryAt}
-let confirmDel = null, confirmExt = null, skew = 0, netOk = null;
+let confirmDel = null, confirmExt = null, confirmRelock = null, skew = 0, netOk = null;
 
 function load() { try { const r = localStorage.getItem(KEY); return r ? JSON.parse(r) : []; } catch (e) { return []; } }
 function saveLocal() { try { localStorage.setItem(KEY, JSON.stringify(locks)); } catch (e) {} }
@@ -242,14 +242,17 @@ function cardHTML(L) {
     if (mem[L.id] && !m) delete mem[L.id];
     const num = L.opened ? (plain[L.id] != null ? plain[L.id] : L.opened.num != null ? L.opened.num : null) : m ? m.num : null;
     const open = num !== null;
+    const gs = gateState(L, m, t); // extra conditions (place / wait) not yet met
     const usedUp = m && L.once && L.usedWin === m.win && !(peeks[L.id] > t);
     const needsPeek = open && (L.peekSec || (m && L.once));
-    const visible = open && !usedUp && (!needsPeek || peeks[L.id] > t);
-    let pill = open ? ['open', 'Unlocked'] : busy[L.id] ? ['busy', 'Working'] : ['locked', 'Locked'];
+    const visible = open && !gs && !usedUp && (!needsPeek || peeks[L.id] > t);
+    let pill = gs ? ['busy', gs.req ? 'Waiting' : 'Ready'] : open ? ['open', 'Unlocked'] : busy[L.id] ? ['busy', 'Working'] : ['locked', 'Locked'];
     let count;
     const nextAt = Math.min(L.capsule ? L.capsule.at : Infinity, L.safety ? L.safety.at : Infinity);
     if (busy[L.id]) count = 'Fetching the drand key and unlocking…';
     else if (errs[L.id]) count = errs[L.id].msg;
+    else if (gs) count = gs.req ? 'Shows in ' + dur(gs.req.at + L.gate.waitMs - t) + (m ? ' if the window is still open (closes ' + hm(m.until) + ')' : '')
+      : 'Time reached. ' + (L.gate.loc ? 'Tap ' + gateLabel(L) + ' at the place to view it.' : 'Tap Request to start the ' + unitTxt(L.gate.waitMs) + ' wait.');
     else if (usedUp) count = 'Already revealed this window · hides in ' + dur(m.until - t);
     else if (visible && needsPeek) count = 'Covering again in ' + dur(peeks[L.id] - t);
     else if (L.opened) count = L.opened.how === 'safety' ? 'Opened by the safety unlock' : 'Unlocked ' + when(L.opened.at);
@@ -258,7 +261,9 @@ function cardHTML(L) {
     else count = 'No upcoming window';
     let acts = '';
     if (open && needsPeek && !visible && !usedUp) acts += `<button class="btn" data-act="peek" data-id="${L.id}">Reveal</button>`;
-    if (m) acts += `<button class="btn" data-act="relock" data-id="${L.id}">Relock now</button>`;
+    if (gs && !gs.req) acts += `<button class="btn" data-act="req" data-id="${L.id}">${gateLabel(L)}</button>`;
+    if (m && confirmRelock && confirmRelock.id === L.id) acts += `<span class="rule">Relock now? It stays locked until ${esc(when(L.capsule.at))}.</span><button class="btn danger" data-act="relockgo" data-id="${L.id}">Relock now</button><button class="btn" data-act="relockno">Cancel</button>`;
+    else if (m) acts += `<button class="btn" data-act="relock" data-id="${L.id}">Relock now</button>`;
     if (visible && needsPeek) acts += `<button class="btn" data-act="unpeek" data-id="${L.id}">Cover now</button>`;
     if (!open && !repeating(L) && L.capsule && !busy[L.id]) {
       if (confirmExt && confirmExt.id === L.id) {
@@ -273,6 +278,8 @@ function cardHTML(L) {
     if (L.once && repeating(L)) extra.push('one reveal per window');
     if (L.peekSec) extra.push('brief reveal ' + L.peekSec + 's');
     if (L.protect) extra.push('protected from deletion');
+    if (L.gate && L.gate.loc) extra.push('only within ' + L.gate.loc.r + ' m of a set place');
+    if (L.gate && L.gate.waitMs) extra.push(unitTxt(L.gate.waitMs) + ' wait after Request');
     if (ntfyTopic && L.notify && !L.opened && planned) { const np = nextPlanned(L); extra.push(np ? 'next notification ' + when(np.at) + (np.prio <= 2 ? ' (silent)' : '') : 'notification not booked yet (ntfy books up to 3 days ahead)'); }
     if (L.pending) extra.push('change waiting for the next unlock: ' + ruleTxt(Object.assign({}, L, L.pending)));
     return `<article class="card${visible ? ' open' : ''}${L.pinned ? ' pinned' : ''}">
@@ -285,13 +292,107 @@ function cardHTML(L) {
   }
 }
 
+/* ---------- extra conditions: a place and/or a wait, checked when you tap Request ---------- */
+function gateState(L, m, t) { // null when nothing is holding the number back
+  const g = L.gate; if (!g || (!g.loc && !g.waitMs)) return null;
+  let win;
+  if (L.opened) { if (L.opened.how === 'safety' || L.gatePassed) return null; win = 'open'; }
+  else if (m) { if (L.gateWin === m.win) return null; win = m.win; }
+  else return null;
+  return { win, req: L.req && L.req.win === win ? L.req : null };
+}
+const gateLabel = L => L.gate.loc && L.gate.waitMs ? 'Check location and start wait' : L.gate.loc ? 'Check location' : 'Request';
+function passGate(L, win) { if (win === 'open') L.gatePassed = true; else L.gateWin = win; delete L.req; }
+function getPos() {
+  return new Promise((res, rej) => {
+    if (!navigator.geolocation) return rej(new Error('This browser has no location access.'));
+    navigator.geolocation.getCurrentPosition(res, e => rej(new Error(e.code === 1
+      ? 'Location permission was refused. Allow location for this site in your browser settings, then try again.'
+      : "Couldn't get your location. Try again, ideally near a window or outside.")), { enableHighAccuracy: true, timeout: 20000, maximumAge: 0 });
+  });
+}
+function distM(a, b) {
+  const R = 6371000, rad = x => x * Math.PI / 180, dLat = rad(b.lat - a.lat), dLng = rad(b.lng - a.lng);
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+const fmtDist = m => m < 1000 ? Math.round(m) + ' m' : (m / 1000).toFixed(1) + ' km';
+async function request(L) {
+  const t = now(), m = mem[L.id] && mem[L.id].until > t && mem[L.id].win !== L.closedWin ? mem[L.id] : null;
+  const gs = gateState(L, m, t); if (!gs || gs.req || busy[L.id]) return;
+  if (L.gate.loc) {
+    busy[L.id] = true; render(); toast('Checking your location…');
+    try {
+      const p = await getPos(), here = { lat: p.coords.latitude, lng: p.coords.longitude }, acc = p.coords.accuracy, r = L.gate.loc.r;
+      const d = distM(here, L.gate.loc);
+      if (acc > Math.max(150, 2 * r)) return toast('Your location is too rough right now (within ' + fmtDist(acc) + '). Try again in a moment, ideally near a window.');
+      if (d > r) return toast("You're about " + fmtDist(d) + ' from the place. It needs to be within ' + r + ' m.');
+    } catch (e) { return toast(e.message); }
+    finally { delete busy[L.id]; render(); }
+  }
+  if (L.gate.waitMs) { L.req = { at: now(), win: gs.win }; toast((L.gate.loc ? 'Location checked. ' : '') + 'It shows at ' + hm(L.req.at + L.gate.waitMs) + '.'); }
+  else { passGate(L, gs.win); toast('Location checked.'); }
+  touch(L); save(); render(); bookAll();
+}
+function gateTick() { // finish waits that are done; drop requests whose window has closed
+  const t = now();
+  for (const L of locks) {
+    if (!L.req || L.deleted || !L.gate) continue;
+    const w = L.req.win, stillOpen = w === 'open' ? !!L.opened : (currentWindow(L, t) || {}).start === w;
+    if (!stillOpen) { delete L.req; touch(L); save(); }
+    else if (t >= L.req.at + (L.gate.waitMs || 0)) { passGate(L, w); touch(L); save(); }
+  }
+}
+/* form controls */
+let gPlace = null;
+function showWhere(acc) {
+  $('g-where').textContent = gPlace ? 'Place set: ' + gPlace.lat.toFixed(5) + ', ' + gPlace.lng.toFixed(5) + (acc ? ' (accurate to about ' + fmtDist(acc) + ')' : '') + '.' : 'No place set yet.';
+}
+function setGateForm(g) {
+  $('g-loc').checked = !!(g && g.loc); gPlace = g && g.loc ? { lat: g.loc.lat, lng: g.loc.lng } : null;
+  $('g-r').value = g && g.loc ? g.loc.r : 150; $('g-coords').value = gPlace ? gPlace.lat.toFixed(6) + ', ' + gPlace.lng.toFixed(6) : '';
+  $('g-wait').checked = !!(g && g.waitMs); $('g-waitm').value = g && g.waitMs ? g.waitMs / 60000 : 10;
+  gateBoxes(); showWhere();
+}
+function gateBoxes() {
+  $('g-locBox').hidden = !$('g-loc').checked;
+  $('g-waitRow').hidden = mode === 'cycle'; $('g-waitBox').hidden = mode === 'cycle' || !$('g-wait').checked;
+}
+function readGate() {
+  const loc = $('g-loc').checked, wait = $('g-wait').checked && mode !== 'cycle';
+  if (!loc && !wait) return { gate: null };
+  const gate = {};
+  if (loc) {
+    if (!gPlace) return { error: 'Set the place: tap "Use my current location" while you\'re there, or paste its coordinates.' };
+    gate.loc = { lat: gPlace.lat, lng: gPlace.lng, r: Math.max(50, Math.round(+$('g-r').value) || 150) };
+  }
+  if (wait) { const mn = +$('g-waitm').value; if (!(mn > 0)) return { error: 'Enter how many minutes to wait.' }; gate.waitMs = Math.round(mn * 60000); }
+  return { gate };
+}
+$('g-loc').addEventListener('change', gateBoxes);
+$('g-wait').addEventListener('change', gateBoxes);
+$('g-here').addEventListener('click', async () => {
+  $('g-where').textContent = 'Getting your location…';
+  try { const p = await getPos(); gPlace = { lat: p.coords.latitude, lng: p.coords.longitude }; $('g-coords').value = gPlace.lat.toFixed(6) + ', ' + gPlace.lng.toFixed(6); showWhere(p.coords.accuracy); }
+  catch (e) { $('g-where').textContent = e.message; }
+});
+$('g-coords').addEventListener('input', () => {
+  const mt = $('g-coords').value.match(/(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/);
+  const lat = mt && +mt[1], lng = mt && +mt[2];
+  gPlace = mt && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null; showWhere();
+});
+
 /* ---------- list actions ---------- */
 function onCardClick(e) {
   const b = e.target.closest('button[data-act]'); if (!b) return;
   const L = locks.find(l => l.id === b.dataset.id), a = b.dataset.act, t = now();
   if (a === 'peek') { const m = mem[L.id]; peeks[L.id] = t + (L.peekSec ? L.peekSec * 1000 : 30000); if (m && L.once) { L.usedWin = m.win; touch(L); save(); } }
   if (a === 'unpeek') delete peeks[L.id];
-  if (a === 'relock' && mem[L.id]) { // end this window early; the next window is already sealed
+  if (a === 'relock' && mem[L.id]) { const c = confirmRelock = { id: L.id }; setTimeout(() => { if (confirmRelock === c) { confirmRelock = null; render(); } }, 15000); }
+  if (a === 'relockno') confirmRelock = null;
+  if (a === 'req') { request(L); return; }
+  if (a === 'relockgo' && mem[L.id]) { // end this window early; the next window is already sealed
+    confirmRelock = null;
     L.closedWin = mem[L.id].win; delete mem[L.id]; delete peeks[L.id]; touch(L); save(); toast('Relocked. Next visible ' + when(L.capsule.at) + '.');
   }
   if (a === 'pin') { L.pinned = !L.pinned; touch(L); save(); }
@@ -341,7 +442,7 @@ function setMode(m) {
   ['until', 'duration', 'schedule', 'cycle'].forEach(m => { $('m-' + m).hidden = m !== mode; });
   $('m-schedule').style.display = mode === 'schedule' ? 'flex' : '';
   $('repeatNote').hidden = !(mode === 'schedule' || mode === 'cycle');
-  cyclePreview();
+  gateBoxes(); cyclePreview();
 }
 $('modes').addEventListener('click', e => { const b = e.target.closest('.mode'); if (b) setMode(b.dataset.mode); });
 function setDays(arr) { days = arr.slice(); document.querySelectorAll('#days .day').forEach(b => b.setAttribute('aria-pressed', String(days.includes(+b.dataset.d)))); }
@@ -486,7 +587,7 @@ setDefaultDate();
 setFirstWindow(nextHour());
 
 /* Reads the timing settings from the form. Returns { S } or { error }. */
-const TIMING = ['mode', 'unlockAt', 'days', 'from', 'to', 'lockMs', 'openMs', 'start', 'excl', 'peekSec', 'once'];
+const TIMING = ['mode', 'unlockAt', 'days', 'from', 'to', 'lockMs', 'openMs', 'start', 'excl', 'peekSec', 'once', 'gate'];
 function readSettings(t, allowPast) {
   const n = id => +$(id).value, S = { mode };
   if (mode === 'until') {
@@ -510,6 +611,7 @@ function readSettings(t, allowPast) {
   }
   S.peekSec = $('o-peek').checked ? Math.max(1, n('o-peeksec') || 10) : 0;
   S.once = $('o-once').checked && (mode === 'schedule' || mode === 'cycle');
+  const g = readGate(); if (g.error) return { error: g.error }; if (g.gate) S.gate = g.gate;
   const first = firstOpening(S, t);
   if (!first) return { error: mode === 'cycle' ? 'With these exclusions the number would never be visible.' : 'That schedule has no upcoming window.' };
   return { S };
@@ -537,7 +639,7 @@ $('form').addEventListener('submit', async e => {
       if (repeating(L) || safeAt < L.unlockAt) L.safety = await seal(safeAt, num);
     }
     locks.unshift(L); save(); bookAll();
-    $('f-num').value = ''; $('f-label').value = ''; $('f-pin').checked = false; $('f-protect').checked = false; setDefaultDate(); setFirstWindow(nextHour());
+    $('f-num').value = ''; $('f-label').value = ''; $('f-pin').checked = false; $('f-protect').checked = false; setGateForm(null); setDefaultDate(); setFirstWindow(nextHour());
   } catch (ex) { fail('Sealing failed: ' + ex.message); }
   finally { btn.disabled = false; btn.textContent = 'Seal it'; render(); }
 });
@@ -571,7 +673,7 @@ function startEdit(L) {
     const ws = !L.pending && L.capsule ? cycleWindowStartAt(src, L.capsule.at) : nextWindowStart(src, now()) || src.start + src.lockMs;
     setFirstWindow(new Date(ws));
   }
-  $('o-peek').checked = !!src.peekSec; if (src.peekSec) $('o-peeksec').value = src.peekSec; $('o-once').checked = !!src.once; $('f-protect').checked = !!L.protect;
+  $('o-peek').checked = !!src.peekSec; if (src.peekSec) $('o-peeksec').value = src.peekSec; $('o-once').checked = !!src.once; $('f-protect').checked = !!L.protect; setGateForm(src.gate);
   $('form').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 function endEdit() {
@@ -579,7 +681,7 @@ function endEdit() {
   $('formTitle').textContent = 'New lock'; $('editNote').hidden = true;
   ['numRow', 'safeSect', 'pinRow', 'notifyRow'].forEach(id => { $(id).hidden = false; });
   $('editCancel').hidden = true; $('submit').textContent = 'Seal it'; $('err').hidden = true;
-  $('f-label').value = ''; $('f-protect').checked = false; exRules = []; renderEx(); setDefaultDate(); setFirstWindow(nextHour());
+  $('f-label').value = ''; $('f-protect').checked = false; setGateForm(null); exRules = []; renderEx(); setDefaultDate(); setFirstWindow(nextHour());
 }
 $('editCancel').addEventListener('click', endEdit);
 async function saveEdit(fail) {
@@ -592,7 +694,7 @@ async function saveEdit(fail) {
   let note;
   try {
     if (num != null) {
-      applyTiming(L, S); delete L.pending; delete mem[L.id];
+      applyTiming(L, S); delete L.pending; delete mem[L.id]; delete L.gatePassed; delete L.gateWin; delete L.req;
       if (repeating(L)) {
         const w = currentWindow(L, t);
         L.capsule = await seal(nextWindowStart(L, w ? w.end - 1 : t), num);
@@ -839,7 +941,12 @@ async function ntfySend(seq, at, title, body, prio) {
 }
 // The times a lock should notify at, within ntfy's 3-day booking limit. Each gets a fixed ID so re-booking replaces it.
 function targets(L, t) {
-  if (L.deleted || L.opened || !L.notify) return [];
+  if (L.deleted || !L.notify) return [];
+  if (L.req && L.gate && L.gate.waitMs) { // a wait in progress: tell me when it's ready
+    const at = L.req.at + L.gate.waitMs;
+    if (at - t > 15000) return [{ seq: 'tl' + L.id + '-ready', at, p: 4, body: '"' + L.label + '" is ready to view.' }];
+  }
+  if (L.opened) return [];
   const out = [], label = L.label;
   if (!repeating(L)) {
     const at = Math.min(L.capsule ? L.capsule.at : Infinity, L.safety ? L.safety.at : Infinity);
@@ -972,7 +1079,7 @@ render();
 migrate();
 setupFromLink();
 checkNet();
-setInterval(() => { locks.forEach(L => { process(L); }); render(); }, 1000);
+setInterval(() => { locks.forEach(L => { process(L); }); gateTick(); render(); }, 1000);
 setInterval(checkNet, 5 * 60000);
 syncNow().then(bookAll);
 setInterval(() => { if (!document.hidden) syncNow().then(bookAll); }, 60000);
