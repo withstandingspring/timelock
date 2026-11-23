@@ -168,6 +168,16 @@ async function process(L) {
     return;
   }
   const t = now();
+  /* winCap: this window's seal (for a round that has already passed), kept until the window ends so a
+     reload, a phone that dropped the tab, or another device can reopen it from drand. */
+  if (L.winCap && (t >= L.winCap.end || L.winCap.win === L.closedWin)) { delete L.winCap; touch(L); save(); }
+  if (L.winCap && repeating(L) && !(mem[L.id] && mem[L.id].win === L.winCap.win) && !(L.capsule && t >= L.capsule.at)) {
+    busy[L.id] = true; render();
+    try { const n = await openCapsule(L.winCap.ct); if (L.winCap) mem[L.id] = { num: n, until: L.winCap.end, win: L.winCap.win }; delete errs[L.id]; }
+    catch (e) { errs[L.id] = { msg: "The window is open, but couldn't reach drand to show it on this device. Retrying shortly.", retryAt: now() + 15000 }; }
+    finally { delete busy[L.id]; render(); }
+    return;
+  }
   const safeDue = L.safety && t >= L.safety.at;
   const mainDue = L.capsule && t >= L.capsule.at;
   if (!safeDue && !mainDue) return;
@@ -176,7 +186,7 @@ async function process(L) {
     if (safeDue) {
       const n = await openCapsule(L.safety.ct);
       plain[L.id] = n; savePlain();
-      L.opened = { how: 'safety', at: now(), ct: L.safety.ct }; L.capsule = null; L.safety = null; delete mem[L.id];
+      L.opened = { how: 'safety', at: now(), ct: L.safety.ct }; L.capsule = null; L.safety = null; delete mem[L.id]; delete L.winCap;
     } else {
       const n = await openCapsule(L.capsule.ct);
       if (L.pending) { applyTiming(L, L.pending); delete L.pending; } // a change saved while sealed takes effect now
@@ -185,10 +195,11 @@ async function process(L) {
         plain[L.id] = n; savePlain();
         L.opened = { how: 'time', at: now(), ct: L.capsule.ct }; L.capsule = null; L.safety = null;
       } else {
-      const t2 = now(), w = currentWindow(L, t2);
+      const t2 = now(), w = currentWindow(L, t2), thisCt = L.capsule.ct;
       const next = nextWindowStart(L, w ? w.end - 1 : t2);
       L.capsule = await seal(next, n); // re-seal for the next window before showing anything
-      if (w) mem[L.id] = { num: n, until: w.end, win: w.start };
+      if (w) { mem[L.id] = { num: n, until: w.end, win: w.start }; L.winCap = { win: w.start, end: w.end, ct: thisCt }; }
+      else delete L.winCap;
       }
     }
     delete errs[L.id]; touch(L); save();
@@ -395,7 +406,7 @@ function onCardClick(e) {
   if (a === 'req') { request(L); return; }
   if (a === 'relockgo' && mem[L.id]) { // end this window early; the next window is already sealed
     confirmRelock = null;
-    L.closedWin = mem[L.id].win; delete mem[L.id]; delete peeks[L.id]; touch(L); save(); toast('Relocked. Next visible ' + when(L.capsule.at) + '.');
+    L.closedWin = mem[L.id].win; delete L.winCap; delete mem[L.id]; delete peeks[L.id]; touch(L); save(); toast('Relocked. Next visible ' + when(L.capsule.at) + '.');
   }
   if (a === 'pin') { L.pinned = !L.pinned; touch(L); save(); }
   if (a === 'excl') { openExEdit(L); return; }
@@ -558,7 +569,7 @@ $('exEditSave').addEventListener('click', async () => {
       L.excl = excl;
       const w = currentWindow(L, t), next = nextWindowStart(L, w ? w.end - 1 : t);
       L.capsule = await seal(next, mem[L.id].num);
-      if (!w) delete mem[L.id];
+      if (!w) { delete mem[L.id]; delete L.winCap; }
       note = 'Next visible ' + fmtWin(L.capsule.at) + '.';
     } else if (L.capsule) {
       const ws = cycleWindowStartAt(L, L.capsule.at);
@@ -700,12 +711,12 @@ async function saveEdit(fail) {
   let note;
   try {
     if (num != null) {
-      applyTiming(L, S); delete L.pending; delete mem[L.id]; delete L.gatePassed; delete L.gateWin; delete L.req;
+      applyTiming(L, S); delete L.pending; delete mem[L.id]; delete L.gatePassed; delete L.gateWin; delete L.req; delete L.winCap;
       if (repeating(L)) {
         const w = currentWindow(L, t);
         L.capsule = await seal(nextWindowStart(L, w ? w.end - 1 : t), num);
         if (L.opened) { L.opened = null; delete plain[L.id]; savePlain(); }
-        if (w) mem[L.id] = { num, until: w.end, win: w.start };
+        if (w) { mem[L.id] = { num, until: w.end, win: w.start }; L.winCap = { win: w.start, end: w.end, ct: (await seal(w.start, num)).ct }; }
         note = w ? 'Visible until ' + when(w.end) + ', then sealed until ' + when(L.capsule.at) + '.' : 'Sealed until ' + when(L.capsule.at) + '.';
       } else if (L.unlockAt > t) {
         L.capsule = await seal(L.unlockAt, num);
