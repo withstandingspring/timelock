@@ -1141,7 +1141,19 @@ async function checkNet() {
 }
 
 /* ---------- start ---------- */
+/* Ask the browser to keep this site's data even if the phone runs low on space. */
+async function keepStorage() {
+  const el = $('persistNote');
+  try {
+    if (!navigator.storage || !navigator.storage.persist) { el.textContent = "This browser can't promise to keep the data if the phone runs very low on space."; return; }
+    const ok = (await navigator.storage.persisted()) || (await navigator.storage.persist());
+    el.className = ok ? 'ok' : 'net';
+    el.textContent = ok ? 'Storage is protected: the browser won\'t clear your locks to free up space. Clearing site data yourself still would.'
+      : 'Storage is not protected yet: if the phone runs very low on space, the browser may clear it. Adding this page to your home screen usually fixes this.';
+  } catch (e) { el.textContent = ''; }
+}
 locks = load();
+keepStorage();
 render();
 migrate();
 setupFromLink();
