@@ -83,6 +83,12 @@ button.btn.danger{color:var(--warn)}
 .exRule{border:1px solid var(--line);border-radius:8px;padding:12px;display:flex;flex-direction:column;gap:10px}
 .plan{display:flex;flex-wrap:wrap;gap:4px 12px;font-size:.88rem;align-items:baseline}
 .plan .count{min-width:0}
+.tabs{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--bg);display:flex;gap:2px;overflow-x:auto;border-bottom:1px solid var(--line);margin-top:-8px}
+body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);z-index:10;background:var(--bg)}
+.tabbtn{flex:1 0 auto;font:inherit;font-size:.9rem;font-weight:600;color:var(--muted);background:none;border:0;border-bottom:3px solid transparent;padding:12px 8px 9px;cursor:pointer;white-space:nowrap}
+.tabbtn[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--brass)}
+.tabbtn:focus-visible{outline:2px solid var(--brass);outline-offset:-2px}
+.tab{display:flex;flex-direction:column;gap:22px}
 .empty{color:var(--muted);text-align:center;padding:24px}
 .how p{margin:8px 0 0;color:var(--muted);font-size:.9rem}
 </style>
@@ -91,13 +97,21 @@ button.btn.danger{color:var(--warn)}
 <div class="wrap">
   <header>
     <h1>Number Time Lock</h1>
-    <p class="sub">Put a number in, choose when it may be seen. It's sealed with time-lock encryption, so it can't be opened early, by you or anyone.</p>
     <p class="net" id="net">Checking connection to drand…</p>
   </header>
 
   <div id="clockAlert" class="alert" hidden></div>
   <div id="notifyAlert" class="alert" hidden></div>
 
+  <nav class="tabs" role="tablist" aria-label="Sections">
+    <button type="button" role="tab" class="tabbtn" id="t-locks" data-tab="locks" aria-selected="true">Locks</button>
+    <button type="button" role="tab" class="tabbtn" id="t-new" data-tab="new" aria-selected="false">New lock</button>
+    <button type="button" role="tab" class="tabbtn" id="t-notify" data-tab="notify" aria-selected="false">Notifications</button>
+    <button type="button" role="tab" class="tabbtn" id="t-sync" data-tab="sync" aria-selected="false">Sync</button>
+    <button type="button" role="tab" class="tabbtn" id="t-more" data-tab="more" aria-selected="false">More</button>
+  </nav>
+
+  <div class="tab" id="tab-locks" role="tabpanel">
   <section class="panel" id="exEdit" hidden>
     <h2 id="exEditTitle">Exclusions</h2>
     <p class="note">Adding an exclusion works straight away: if the next sealed window falls in it, the seal moves to the next allowed window. Removing one takes effect after the next unlock, because a seal can't be made to open earlier.</p>
@@ -128,6 +142,13 @@ button.btn.danger{color:var(--warn)}
     <div class="list" id="pinned"></div>
   </section>
 
+  <section style="display:flex;flex-direction:column;gap:12px">
+    <h2 id="restTitle">Your locks</h2>
+    <div class="list" id="list"></div>
+  </section>
+  </div>
+
+  <div class="tab" id="tab-new" role="tabpanel" hidden>
   <form class="panel" id="form" autocomplete="off">
     <h2 id="formTitle">New lock</h2>
     <p class="note" id="editNote" hidden></p>
@@ -197,6 +218,7 @@ button.btn.danger{color:var(--warn)}
       <div style="font-weight:600">Extra conditions <span style="font-weight:400;color:var(--muted)">(optional)</span></div>
       <p class="note">These apply once the time allows it. You tap Request and the app checks them. They're checks inside this app, so they slow you down but can be got around with effort.</p>
       <label class="check"><input type="checkbox" id="g-loc"><span>Only show at a place<small>When you tap Request, the app checks your location once.</small></span></label>
+      <p class="note" id="g-lockedNote" hidden>The place can't be changed while this lock is locked. It can be changed while it's open.</p>
       <div id="g-locBox" hidden style="display:flex;flex-direction:column;gap:10px">
         <div class="actions"><button class="btn" type="button" id="g-here">Use my current location</button></div>
         <div class="row">
@@ -230,12 +252,9 @@ button.btn.danger{color:var(--warn)}
     <div class="actions"><button class="primary" type="submit" id="submit">Seal it</button><button class="btn" type="button" id="editCancel" hidden>Cancel editing</button></div>
     <p class="ok" id="sealMsg" role="status" hidden></p>
   </form>
+  </div>
 
-  <section style="display:flex;flex-direction:column;gap:12px">
-    <h2 id="restTitle">Your locks</h2>
-    <div class="list" id="list"></div>
-  </section>
-
+  <div class="tab" id="tab-notify" role="tabpanel" hidden>
   <section class="panel" id="notifyPanel">
     <h2>Unlock notifications</h2>
     <p class="note">Sends a push notification through the free ntfy app when a lock unlocks, even with this page closed. The notification shows the lock's name, never its number.</p>
@@ -286,7 +305,9 @@ button.btn.danger{color:var(--warn)}
     </div>
     <p id="n-msg" class="net" hidden></p>
   </section>
+  </div>
 
+  <div class="tab" id="tab-sync" role="tabpanel" hidden>
   <section class="panel" id="syncPanel">
     <h2>Sync between devices</h2>
     <div id="syncOff">
@@ -328,7 +349,9 @@ button.btn.danger{color:var(--warn)}
     </div>
     <p id="syncMsg" hidden></p>
   </section>
+  </div>
 
+  <div class="tab" id="tab-more" role="tabpanel" hidden>
   <section class="panel">
     <h2>Backup</h2>
     <p class="note">Locks are saved in this browser. A backup lets you restore them after clearing browser data, or move them to another device. Every lock stays sealed in the backup. Restoring an unlocked lock needs an internet connection once to show its number again.</p>
@@ -347,15 +370,17 @@ button.btn.danger{color:var(--warn)}
     <p id="impMsg" hidden></p>
   </section>
 
-  <details class="how panel">
+  <details class="how panel" open>
     <summary>How it works</summary>
     <p>Your number is encrypted in this browser to a future round of <a href="https://drand.love" target="_blank" rel="noopener">drand</a>, a public randomness network run by independent organizations. The key for each round is published only when that round arrives, every 3 seconds. Until then nobody can decrypt it: not you, not this site, not Claude. Changing your device clock doesn't help, because the key simply doesn't exist yet.</p>
     <p>The number itself is never saved before it unlocks. Only the sealed version is. Unlocking needs an internet connection to fetch the published key.</p>
     <p>Limits: once a number is shown, you know it. Repeating locks rely on this page re-sealing the number during each window. If drand stopped running before your unlock time, the number could not be recovered, so keep a separate backup of anything you can't afford to lose.</p>
   </details>
-  <p class="net" style="text-align:center;margin:0">Version 24</p>
+  </div>
+
+  <p class="net" style="text-align:center;margin:0">Version 25</p>
 </div>
 <script src="vendor/tlock.js?v=0.9.0"></script>
-<script src="app.js?v=24"></script>
+<script src="app.js?v=25"></script>
 </body>
 </html>

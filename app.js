@@ -245,7 +245,7 @@ function render() {
   $('pinned').innerHTML = pinned.map(cardHTML).join('');
   $('restTitle').hidden = !rest.length && !!pinned.length;
   $('list').innerHTML = rest.length ? rest.map(cardHTML).join('')
-    : pinned.length ? '' : '<div class="empty">No locks yet. Seal a number above and it will appear here.</div>';
+    : pinned.length ? '' : '<div class="empty">No locks yet. Seal one in the New lock tab and it will appear here.</div>';
 }
 function cardHTML(L) {
   const t = now();
@@ -393,6 +393,18 @@ $('g-coords').addEventListener('input', () => {
   const mt = $('g-coords').value.match(/(-?\d{1,3}(?:\.\d+)?)\s*,\s*(-?\d{1,3}(?:\.\d+)?)/);
   const lat = mt && +mt[1], lng = mt && +mt[2];
   gPlace = mt && Math.abs(lat) <= 90 && Math.abs(lng) <= 180 ? { lat, lng } : null; showWhere();
+});
+
+/* ---------- tabs ---------- */
+function showTab(name) {
+  document.querySelectorAll('.tabbtn').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
+  document.querySelectorAll('.tab').forEach(p => { p.hidden = p.id !== 'tab-' + name; });
+  window.scrollTo(0, 0);
+}
+document.querySelector('.tabs').addEventListener('click', e => {
+  const b = e.target.closest('.tabbtn'); if (!b) return;
+  if (editId2 && b.dataset.tab !== 'new') endEdit(); // leaving the form abandons an unsaved edit
+  showTab(b.dataset.tab);
 });
 
 /* ---------- list actions ---------- */
@@ -549,7 +561,7 @@ const drawEdit = exEditor($('exEditList'), $('exEditAdd'), () => editRules, edit
 function openExEdit(L) {
   editId = L.id; editRules = JSON.parse(JSON.stringify((L.excl && L.excl.rules) || []));
   $('exEditTitle').textContent = 'Exclusions for "' + L.label + '"'; $('exEditErr').hidden = true;
-  $('exEdit').hidden = false; drawEdit(); $('exEdit').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  showTab('locks'); $('exEdit').hidden = false; drawEdit(); $('exEdit').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 function closeExEdit() { editId = null; $('exEdit').hidden = true; }
 $('exEditCancel').addEventListener('click', closeExEdit);
@@ -691,7 +703,9 @@ function startEdit(L) {
     setFirstWindow(new Date(ws));
   }
   $('o-peek').checked = !!src.peekSec; if (src.peekSec) $('o-peeksec').value = src.peekSec; $('o-once').checked = !!src.once; $('f-protect').checked = !!L.protect; setGateForm(src.gate);
-  $('form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  const locked = !(L.opened || mem[L.id]); // the place can only be changed while the lock is open
+  ['g-loc', 'g-here', 'g-coords', 'g-r'].forEach(id => { $(id).disabled = locked; }); $('g-lockedNote').hidden = !locked;
+  $('t-new').textContent = 'Edit lock'; showTab('new');
 }
 function endEdit() {
   editId2 = null;
@@ -699,13 +713,20 @@ function endEdit() {
   ['numRow', 'safeSect', 'pinRow', 'notifyRow'].forEach(id => { $(id).hidden = false; });
   $('editCancel').hidden = true; $('submit').textContent = 'Seal it'; $('err').hidden = true;
   $('f-label').value = ''; $('f-protect').checked = false; setGateForm(null); exRules = []; renderEx(); setDefaultDate(); setFirstWindow(nextHour());
+  ['g-loc', 'g-here', 'g-coords', 'g-r'].forEach(id => { $(id).disabled = false; }); $('g-lockedNote').hidden = true;
+  $('t-new').textContent = 'New lock';
 }
-$('editCancel').addEventListener('click', endEdit);
+$('editCancel').addEventListener('click', () => { endEdit(); showTab('locks'); });
 async function saveEdit(fail) {
   const L = locks.find(l => l.id === editId2 && !l.deleted); if (!L) return endEdit();
   if (busy[L.id]) return fail('This lock is busy unlocking. Try again in a moment.');
   const t = now(), num = L.opened ? plain[L.id] : mem[L.id] ? mem[L.id].num : null;
   const r = readSettings(t, !!L.opened); if (r.error) return fail(r.error);
+  let flashed = false;
+  if (num == null) { // locked: the place stays as it was
+    const g = Object.assign({}, r.S.gate || {}); if (L.gate && L.gate.loc) g.loc = L.gate.loc; else delete g.loc;
+    if (g.loc || g.waitMs) r.S.gate = g; else delete r.S.gate;
+  }
   const S = r.S, label = $('f-label').value.trim() || L.label;
   const btn = $('submit'); btn.disabled = true; btn.textContent = 'Saving…'; busy[L.id] = true;
   let note;
@@ -736,9 +757,14 @@ async function saveEdit(fail) {
       }
     } else { applyTiming(L, S); note = 'Saved.'; }
     L.label = label; if ($('f-protect').checked) L.protect = true; else delete L.protect;
-    touch(L); save(); bookAll(); endEdit(); toast(note);
+    touch(L); save(); bookAll();
+    flashed = true; btn.classList.add('sealed'); btn.textContent = 'Saved ✓';
+    setTimeout(() => { // show the confirmation, then go back to the locks with the edited one glowing
+      btn.classList.remove('sealed'); btn.disabled = false; endEdit(); showTab('locks');
+      fresh[L.id] = now(); toast('Saved "' + L.label + '". ' + note); render();
+    }, 900);
   } catch (ex) { fail('Saving failed: ' + ex.message); }
-  finally { delete busy[L.id]; btn.disabled = false; if (!editId2) btn.textContent = 'Seal it'; render(); }
+  finally { delete busy[L.id]; if (!flashed) { btn.disabled = false; if (!editId2) btn.textContent = 'Seal it'; } render(); }
 }
 
 /* ---------- backup ---------- */
