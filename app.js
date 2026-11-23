@@ -1076,7 +1076,9 @@ async function bookAll() {
     }
     const cancel = seq => { if (stopped) return; ntfyCall('cancel', seq, {}).catch(e => { if (e instanceof Paused) stopped = true; }); bySeq.delete(seq); };
     if (sched) { // anything booked on ntfy that no lock wants now gets cancelled, whoever booked it
-      for (const s of sched) if (s.seq && s.seq.startsWith('tl') && !want.has(s.seq) && !keepSeqs.has(s.seq) && s.at - t > 60000) cancel(s.seq);
+      // Without sync, other devices' locks are unknown here, so only tidy bookings that belong to this device's locks
+      const mine = seq => locks.some(L => seq === 'tl' + L.id || seq.startsWith('tl' + L.id + '-'));
+      for (const s of sched) if (s.seq && s.seq.startsWith('tl') && !want.has(s.seq) && !keepSeqs.has(s.seq) && s.at - t > 60000 && (sync || mine(s.seq))) cancel(s.seq);
     }
     for (const L of locks) { // tidy this phone's records
       if (!L.booked) continue;
@@ -1098,7 +1100,7 @@ function renderPlanned() {
   $('plannedWhen').textContent = 'Checked with ntfy at ' + new Date(plannedAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) + '.';
   box.innerHTML = planned.length ? planned.slice(0, 40).map(s => {
     const L = ownerOf(s.seq);
-    return `<div class="plan"><span class="count">${esc(when(s.at))}</span><span>${esc(s.msg)}${s.prio <= 2 ? ' <span class="pill busy">silent</span>' : ''}${s.seq && !L ? ' <span class="pill locked">no lock</span>' : ''}</span></div>`;
+    return `<div class="plan"><span class="count">${esc(when(s.at))}</span><span>${esc(s.msg)}${s.prio <= 2 ? ' <span class="pill busy">silent</span>' : ''}${s.seq && !L ? ' <span class="pill locked">not on this device</span>' : ''}</span></div>`;
   }).join('') + (planned.length > 40 ? `<p class="note">and ${planned.length - 40} more</p>` : '')
     : '<p class="note">Nothing booked right now.</p>';
 }
