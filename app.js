@@ -170,7 +170,7 @@ async function process(L) {
   const t = now();
   /* winCap: this window's seal (for a round that has already passed), kept until the window ends so a
      reload, a phone that dropped the tab, or another device can reopen it from drand. */
-  if (L.winCap && (t >= L.winCap.end || L.winCap.win === L.closedWin)) { delete L.winCap; touch(L); save(); }
+  if (L.winCap && (t >= L.winCap.end || L.winCap.win === L.closedWin || L.strict)) { delete L.winCap; touch(L); save(); }
   if (L.winCap && repeating(L) && !(mem[L.id] && mem[L.id].win === L.winCap.win) && !(L.capsule && t >= L.capsule.at)) {
     busy[L.id] = true; render();
     try { const n = await openCapsule(L.winCap.ct); if (L.winCap) mem[L.id] = { num: n, until: L.winCap.end, win: L.winCap.win }; delete errs[L.id]; }
@@ -198,7 +198,7 @@ async function process(L) {
       const t2 = now(), w = currentWindow(L, t2), thisCt = L.capsule.ct;
       const next = nextWindowStart(L, w ? w.end - 1 : t2);
       L.capsule = await seal(next, n); // re-seal for the next window before showing anything
-      if (w) { mem[L.id] = { num: n, until: w.end, win: w.start }; L.winCap = { win: w.start, end: w.end, ct: thisCt }; }
+      if (w) { mem[L.id] = { num: n, until: w.end, win: w.start }; if (L.strict) delete L.winCap; else L.winCap = { win: w.start, end: w.end, ct: thisCt }; }
       else delete L.winCap;
       }
     }
@@ -290,13 +290,16 @@ function cardHTML(L) {
     if (L.once && repeating(L)) extra.push('one reveal per window');
     if (L.peekSec) extra.push('brief reveal ' + L.peekSec + 's');
     if (L.protect) extra.push('protected from deletion');
+    if (L.strict) extra.push('strict: no copy kept during windows');
     if (L.gate && L.gate.loc) extra.push('only within ' + L.gate.loc.r + ' m of a set place');
     if (L.gate && L.gate.waitMs) extra.push(unitTxt(L.gate.waitMs) + ' wait after Request');
     if (ntfyTopic && L.notify && !L.opened && planned) { const np = nextPlanned(L); extra.push(np ? 'next notification ' + when(np.at) + (np.prio <= 2 ? ' (silent)' : '') : 'notification not booked yet (ntfy books up to 3 days ahead)'); }
     if (L.pending) extra.push('change waiting for the next unlock: ' + ruleTxt(Object.assign({}, L, L.pending)));
     const fr = fresh[L.id] && t - fresh[L.id] < 3000 ? t - fresh[L.id] : null; // new-lock glow; negative delay keeps it smooth across refreshes
-    return `<article class="card${visible ? ' open' : ''}${L.pinned ? ' pinned' : ''}${fr != null ? ' fresh' : ''}"${fr != null ? ` style="animation-delay:-${fr}ms"` : ''}>
-      <div class="top"><h3>${esc(L.label)}</h3><span class="pill ${pill[0]}">${pill[1]}</span></div>
+    const strictOpen = L.strict && m;
+    const band = strictOpen ? `<div class="strictBand" role="note"><strong>Strict lock</strong>This number is only kept while this page stays open. If it reloads or your phone closes the tab, it's gone until the next window${L.capsule ? ', ' + esc(when(L.capsule.at)) : ''}. Write it down now if you need it.</div>` : '';
+    return `<article class="card${visible ? ' open' : ''}${strictOpen ? ' strictOpen' : ''}${L.pinned ? ' pinned' : ''}${fr != null ? ' fresh' : ''}"${fr != null ? ` style="animation-delay:-${fr}ms"` : ''}>
+      <div class="top"><h3>${esc(L.label)}</h3><span class="pill ${pill[0]}">${pill[1]}</span></div>${band}
       <div class="digits${visible ? '' : ' hidden'}">${visible ? esc(num) : '••••••'}</div>
       <div class="count">${esc(count)}</div>
       <div class="rule">${esc(ruleTxt(L))}${extra.length ? ' · ' + esc(extra.join(' · ')) : ''}</div>
@@ -467,6 +470,7 @@ function setMode(m) {
   ['until', 'duration', 'schedule', 'cycle'].forEach(m => { $('m-' + m).hidden = m !== mode; });
   $('m-schedule').style.display = mode === 'schedule' ? 'flex' : '';
   $('repeatNote').hidden = !(mode === 'schedule' || mode === 'cycle');
+  $('strictSect').hidden = !(m === 'schedule' || m === 'cycle');
   gateBoxes(); cyclePreview();
 }
 $('modes').addEventListener('click', e => { const b = e.target.closest('.mode'); if (b) setMode(b.dataset.mode); });
@@ -612,7 +616,7 @@ setDefaultDate();
 setFirstWindow(nextHour());
 
 /* Reads the timing settings from the form. Returns { S } or { error }. */
-const TIMING = ['mode', 'unlockAt', 'days', 'from', 'to', 'lockMs', 'openMs', 'start', 'excl', 'peekSec', 'once', 'gate'];
+const TIMING = ['mode', 'unlockAt', 'days', 'from', 'to', 'lockMs', 'openMs', 'start', 'excl', 'peekSec', 'once', 'gate', 'strict'];
 function readSettings(t, allowPast) {
   const n = id => +$(id).value, S = { mode };
   if (mode === 'until') {
@@ -636,6 +640,7 @@ function readSettings(t, allowPast) {
   }
   S.peekSec = $('o-peek').checked ? Math.max(1, n('o-peeksec') || 10) : 0;
   S.once = $('o-once').checked && (mode === 'schedule' || mode === 'cycle');
+  if ($('f-strict').checked && (mode === 'schedule' || mode === 'cycle')) S.strict = true;
   const g = readGate(); if (g.error) return { error: g.error }; if (g.gate) S.gate = g.gate;
   const first = firstOpening(S, t);
   if (!first) return { error: mode === 'cycle' ? 'With these exclusions the number would never be visible.' : 'That schedule has no upcoming window.' };
@@ -668,7 +673,7 @@ $('form').addEventListener('submit', async e => {
     btn.classList.add('sealed'); btn.textContent = 'Sealed ✓';
     const sm = $('sealMsg'); sm.textContent = 'Sealed "' + L.label + '". ' + (repeating(L) ? 'First visible ' : 'Opens ') + when(L.capsule.at) + '.'; sm.hidden = false;
     clearTimeout(sealedTimer); sealedTimer = setTimeout(() => { btn.classList.remove('sealed'); if (!editId2) btn.textContent = 'Seal it'; sm.hidden = true; }, 6000);
-    $('f-num').value = ''; $('f-label').value = ''; $('f-pin').checked = false; $('f-protect').checked = false; setGateForm(null); setDefaultDate(); setFirstWindow(nextHour());
+    $('f-num').value = ''; $('f-label').value = ''; $('f-pin').checked = false; $('f-protect').checked = false; $('f-strict').checked = false; setGateForm(null); setDefaultDate(); setFirstWindow(nextHour());
   } catch (ex) { fail('Sealing failed: ' + ex.message); }
   finally { btn.disabled = false; if (!sealedOk) btn.textContent = 'Seal it'; sealedOk = false; render(); }
 });
@@ -702,7 +707,7 @@ function startEdit(L) {
     const ws = !L.pending && L.capsule ? cycleWindowStartAt(src, L.capsule.at) : nextWindowStart(src, now()) || src.start + src.lockMs;
     setFirstWindow(new Date(ws));
   }
-  $('o-peek').checked = !!src.peekSec; if (src.peekSec) $('o-peeksec').value = src.peekSec; $('o-once').checked = !!src.once; $('f-protect').checked = !!L.protect; setGateForm(src.gate);
+  $('o-peek').checked = !!src.peekSec; if (src.peekSec) $('o-peeksec').value = src.peekSec; $('o-once').checked = !!src.once; $('f-protect').checked = !!L.protect; setGateForm(src.gate); $('f-strict').checked = !!src.strict;
   const locked = !(L.opened || mem[L.id]); // the place can only be changed while the lock is open
   ['g-loc', 'g-here', 'g-coords', 'g-r'].forEach(id => { $(id).disabled = locked; }); $('g-lockedNote').hidden = !locked;
   $('t-new').textContent = 'Edit lock'; showTab('new');
@@ -712,7 +717,7 @@ function endEdit() {
   $('formTitle').textContent = 'New lock'; $('editNote').hidden = true;
   ['numRow', 'safeSect', 'pinRow', 'notifyRow'].forEach(id => { $(id).hidden = false; });
   $('editCancel').hidden = true; $('submit').textContent = 'Seal it'; $('err').hidden = true;
-  $('f-label').value = ''; $('f-protect').checked = false; setGateForm(null); exRules = []; renderEx(); setDefaultDate(); setFirstWindow(nextHour());
+  $('f-label').value = ''; $('f-protect').checked = false; $('f-strict').checked = false; setGateForm(null); exRules = []; renderEx(); setDefaultDate(); setFirstWindow(nextHour());
   ['g-loc', 'g-here', 'g-coords', 'g-r'].forEach(id => { $(id).disabled = false; }); $('g-lockedNote').hidden = true;
   $('t-new').textContent = 'New lock';
 }
@@ -737,7 +742,7 @@ async function saveEdit(fail) {
         const w = currentWindow(L, t);
         L.capsule = await seal(nextWindowStart(L, w ? w.end - 1 : t), num);
         if (L.opened) { L.opened = null; delete plain[L.id]; savePlain(); }
-        if (w) { mem[L.id] = { num, until: w.end, win: w.start }; L.winCap = { win: w.start, end: w.end, ct: (await seal(w.start, num)).ct }; }
+        if (w) { mem[L.id] = { num, until: w.end, win: w.start }; if (!L.strict) L.winCap = { win: w.start, end: w.end, ct: (await seal(w.start, num)).ct }; }
         note = w ? 'Visible until ' + when(w.end) + ', then sealed until ' + when(L.capsule.at) + '.' : 'Sealed until ' + when(L.capsule.at) + '.';
       } else if (L.unlockAt > t) {
         L.capsule = await seal(L.unlockAt, num);

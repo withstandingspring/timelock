@@ -89,6 +89,9 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
 .tabbtn[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--brass)}
 .tabbtn:focus-visible{outline:2px solid var(--brass);outline-offset:-2px}
 .tab{display:flex;flex-direction:column;gap:22px}
+.card.strictOpen{border:2px solid var(--warn)}
+.strictBand{background:var(--warn-soft);color:var(--warn);border:2px solid var(--warn);border-radius:8px;padding:10px 12px;font-weight:600;line-height:1.4}
+.strictBand strong{display:block;text-transform:uppercase;letter-spacing:.08em;font-size:.8rem;margin-bottom:2px}
 .empty{color:var(--muted);text-align:center;padding:24px}
 .how p{margin:8px 0 0;color:var(--muted);font-size:.9rem}
 </style>
@@ -229,6 +232,10 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
       </div>
       <label class="check" id="g-waitRow"><input type="checkbox" id="g-wait"><span>Wait before showing<small>After you tap Request, the number shows once this time has passed. Not available for repeating cycles.</small></span></label>
       <div id="g-waitBox" hidden class="row"><label>Wait (minutes)<input id="g-waitm" type="number" min="1" value="10"></label></div>
+    </div>
+
+    <div class="sect" id="strictSect" hidden>
+      <label class="check"><input type="checkbox" id="f-strict"><span>Strict: keep no copy during a window<small>Nothing is saved while a window is open, so nothing is left behind afterwards. But if the page reloads or your phone closes the tab during a window, the number is gone until the next window. Write it down when you see it.</small></span></label>
     </div>
 
     <div class="sect" id="safeSect">
@@ -378,9 +385,9 @@ body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset
   </details>
   </div>
 
-  <p class="net" style="text-align:center;margin:0">Version 25</p>
+  <p class="net" style="text-align:center;margin:0">Version 26</p>
 </div>
 <script src="vendor/tlock.js?v=0.9.0"></script>
-<script src="app.js?v=25"></script>
+<script src="app.js?v=26"></script>
 </body>
 </html>
