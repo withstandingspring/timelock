@@ -239,6 +239,7 @@ const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;',
 
 /* ---------- render ---------- */
 function render() {
+  if (holdingId) return; // don't redraw under a finger that's holding a number
   renderSync();
   const all = live(), pinned = all.filter(l => l.pinned), rest = all.filter(l => !l.pinned);
   $('pinnedSec').hidden = !pinned.length;
@@ -256,8 +257,9 @@ function cardHTML(L) {
     const open = num !== null;
     const gs = gateState(L, m, t); // extra conditions (place / wait) not yet met
     const usedUp = m && L.once && L.usedWin === m.win && !(peeks[L.id] > t);
-    const needsPeek = open && (L.peekSec || (m && L.once));
-    const visible = open && !gs && !usedUp && (!needsPeek || peeks[L.id] > t);
+    const hold = holdOn(L) && open && !gs && !usedUp; // hold to show: the number only appears while pressed
+    const needsPeek = !hold && open && (L.peekSec || (m && L.once));
+    const visible = !hold && open && !gs && !usedUp && (!needsPeek || peeks[L.id] > t);
     let pill = gs ? ['busy', gs.req ? 'Waiting' : 'Ready'] : open ? ['open', 'Unlocked'] : busy[L.id] ? ['busy', 'Working'] : ['locked', 'Locked'];
     let count;
     const nextAt = Math.min(L.capsule ? L.capsule.at : Infinity, L.safety ? L.safety.at : Infinity);
@@ -266,6 +268,7 @@ function cardHTML(L) {
     else if (gs) count = gs.req ? 'Shows in ' + dur(gs.req.at + L.gate.waitMs - t) + (m ? ' if the window is still open (closes ' + hm(m.until) + ')' : '')
       : 'Time reached. ' + (L.gate.loc ? 'Tap ' + gateLabel(L) + ' at the place to view it.' : 'Tap Request to start the ' + unitTxt(L.gate.waitMs) + ' wait.');
     else if (usedUp) count = 'Already revealed this window · hides in ' + dur(m.until - t);
+    else if (hold) count = (m ? 'Hides in ' + dur(m.until - t) + ' · ' : '') + 'Press and hold the box to see it';
     else if (visible && needsPeek) count = 'Covering again in ' + dur(peeks[L.id] - t);
     else if (L.opened) count = L.opened.how === 'safety' ? 'Opened by the safety unlock' : 'Unlocked ' + when(L.opened.at);
     else if (m) count = 'Hides in ' + dur(m.until - t);
@@ -300,7 +303,8 @@ function cardHTML(L) {
     const band = strictOpen ? `<div class="strictBand" role="note"><strong>Strict lock</strong>This number is only kept while this page stays open. If it reloads or your phone closes the tab, it's gone until the next window${L.capsule ? ', ' + esc(when(L.capsule.at)) : ''}. Write it down now if you need it.</div>` : '';
     return `<article class="card${visible ? ' open' : ''}${strictOpen ? ' strictOpen' : ''}${L.pinned ? ' pinned' : ''}${fr != null ? ' fresh' : ''}"${fr != null ? ` style="animation-delay:-${fr}ms"` : ''}>
       <div class="top"><h3>${esc(L.label)}</h3><span class="pill ${pill[0]}">${pill[1]}</span></div>${band}
-      <div class="digits${visible ? '' : ' hidden'}">${visible ? esc(num) : '••••••'}</div>
+      ${hold ? `<button type="button" class="holdBtn" data-hold="${L.id}" aria-label="Press and hold to show the number"><span>Hold to show</span></button>`
+        : `<div class="digits${visible ? '' : ' hidden'}">${visible ? esc(num) : '••••••'}</div>`}
       <div class="count">${esc(count)}</div>
       <div class="rule">${esc(ruleTxt(L))}${extra.length ? ' · ' + esc(extra.join(' · ')) : ''}</div>
       <div class="actions">${acts}</div>
@@ -409,6 +413,29 @@ document.querySelector('.tabs').addEventListener('click', e => {
   if (editId2 && b.dataset.tab !== 'new') endEdit(); // leaving the form abandons an unsaved edit
   showTab(b.dataset.tab);
 });
+
+/* ---------- hold to show ---------- */
+let holdingId = null;
+const holdOn = L => L.hold === undefined ? !window.__TL_NOHOLD__ : !!L.hold; // locks made before this option count as on
+function numFor(L) {
+  const t = now(), m = mem[L.id] && mem[L.id].until > t && mem[L.id].win !== L.closedWin ? mem[L.id] : null;
+  return L.opened ? (plain[L.id] != null ? plain[L.id] : null) : m ? m.num : null;
+}
+function startHold(btn) {
+  const L = locks.find(l => l.id === btn.dataset.hold), n = L && numFor(L);
+  if (n == null) return;
+  holdingId = L.id; btn.classList.add('showing'); btn.firstElementChild.textContent = n;
+  const m = mem[L.id];
+  if (L.once && m && !L.opened && L.usedWin !== m.win) { L.usedWin = m.win; touch(L); saveLocal(); schedulePush(); } // counts as this window's reveal
+}
+function endHold() { if (!holdingId) return; holdingId = null; render(); }
+document.addEventListener('pointerdown', e => { const b = e.target.closest('[data-hold]'); if (b) { e.preventDefault(); startHold(b); } });
+['pointerup', 'pointercancel'].forEach(ev => document.addEventListener(ev, endHold));
+document.addEventListener('contextmenu', e => { if (e.target.closest('[data-hold]')) e.preventDefault(); }); // no long-press menu
+document.addEventListener('keydown', e => { const b = e.target.closest && e.target.closest('[data-hold]'); if (b && (e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); startHold(b); } });
+document.addEventListener('keyup', e => { if (e.key === ' ' || e.key === 'Enter') endHold(); });
+window.addEventListener('blur', endHold);
+document.addEventListener('visibilitychange', () => { if (document.hidden) endHold(); });
 
 /* ---------- list actions ---------- */
 function onCardClick(e) {
@@ -660,6 +687,7 @@ $('form').addEventListener('submit', async e => {
   const L = Object.assign({ id: Math.random().toString(36).slice(2) + t.toString(36), label: $('f-label').value.trim() || 'Untitled lock', created: t, rev: 1, updated: t }, r.S);
   L.pinned = $('f-pin').checked;
   L.protect = $('f-protect').checked;
+  L.hold = $('f-hold').checked;
   setNotify(L, ntfyTopic ? $('f-notify').value : 'off');
   const btn = $('submit'); btn.disabled = true; btn.textContent = 'Sealing…';
   try {
@@ -673,7 +701,7 @@ $('form').addEventListener('submit', async e => {
     btn.classList.add('sealed'); btn.textContent = 'Sealed ✓';
     const sm = $('sealMsg'); sm.textContent = 'Sealed "' + L.label + '". ' + (repeating(L) ? 'First visible ' : 'Opens ') + when(L.capsule.at) + '.'; sm.hidden = false;
     clearTimeout(sealedTimer); sealedTimer = setTimeout(() => { btn.classList.remove('sealed'); if (!editId2) btn.textContent = 'Seal it'; sm.hidden = true; }, 6000);
-    $('f-num').value = ''; $('f-label').value = ''; $('f-pin').checked = false; $('f-protect').checked = false; $('f-strict').checked = false; setGateForm(null); setDefaultDate(); setFirstWindow(nextHour());
+    $('f-num').value = ''; $('f-label').value = ''; $('f-pin').checked = false; $('f-protect').checked = false; $('f-strict').checked = false; $('f-hold').checked = !window.__TL_NOHOLD__; setGateForm(null); setDefaultDate(); setFirstWindow(nextHour());
   } catch (ex) { fail('Sealing failed: ' + ex.message); }
   finally { btn.disabled = false; if (!sealedOk) btn.textContent = 'Seal it'; sealedOk = false; render(); }
 });
@@ -707,7 +735,7 @@ function startEdit(L) {
     const ws = !L.pending && L.capsule ? cycleWindowStartAt(src, L.capsule.at) : nextWindowStart(src, now()) || src.start + src.lockMs;
     setFirstWindow(new Date(ws));
   }
-  $('o-peek').checked = !!src.peekSec; if (src.peekSec) $('o-peeksec').value = src.peekSec; $('o-once').checked = !!src.once; $('f-protect').checked = !!L.protect; setGateForm(src.gate); $('f-strict').checked = !!src.strict;
+  $('o-peek').checked = !!src.peekSec; if (src.peekSec) $('o-peeksec').value = src.peekSec; $('o-once').checked = !!src.once; $('f-protect').checked = !!L.protect; setGateForm(src.gate); $('f-strict').checked = !!src.strict; $('f-hold').checked = holdOn(L);
   const locked = !(L.opened || mem[L.id]); // the place can only be changed while the lock is open
   ['g-loc', 'g-here', 'g-coords', 'g-r'].forEach(id => { $(id).disabled = locked; }); $('g-lockedNote').hidden = !locked;
   $('t-new').textContent = 'Edit lock'; showTab('new');
@@ -717,7 +745,7 @@ function endEdit() {
   $('formTitle').textContent = 'New lock'; $('editNote').hidden = true;
   ['numRow', 'safeSect', 'pinRow', 'notifyRow'].forEach(id => { $(id).hidden = false; });
   $('editCancel').hidden = true; $('submit').textContent = 'Seal it'; $('err').hidden = true;
-  $('f-label').value = ''; $('f-protect').checked = false; $('f-strict').checked = false; setGateForm(null); exRules = []; renderEx(); setDefaultDate(); setFirstWindow(nextHour());
+  $('f-label').value = ''; $('f-protect').checked = false; $('f-strict').checked = false; $('f-hold').checked = !window.__TL_NOHOLD__; setGateForm(null); exRules = []; renderEx(); setDefaultDate(); setFirstWindow(nextHour());
   ['g-loc', 'g-here', 'g-coords', 'g-r'].forEach(id => { $(id).disabled = false; }); $('g-lockedNote').hidden = true;
   $('t-new').textContent = 'New lock';
 }
@@ -762,6 +790,7 @@ async function saveEdit(fail) {
       }
     } else { applyTiming(L, S); note = 'Saved.'; }
     L.label = label; if ($('f-protect').checked) L.protect = true; else delete L.protect;
+    L.hold = $('f-hold').checked;
     touch(L); save(); bookAll();
     flashed = true; btn.classList.add('sealed'); btn.textContent = 'Saved ✓';
     setTimeout(() => { // show the confirmation, then go back to the locks with the edited one glowing
@@ -1174,6 +1203,7 @@ async function checkNet() {
 }
 
 /* ---------- start ---------- */
+$('f-hold').checked = !window.__TL_NOHOLD__;
 /* Ask the browser to keep this site's data even if the phone runs low on space. */
 async function keepStorage() {
   const el = $('persistNote');
